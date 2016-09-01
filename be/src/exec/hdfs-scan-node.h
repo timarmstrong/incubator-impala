@@ -466,7 +466,7 @@ class HdfsScanNode : public ScanNode {
   /// Lock protects access between scanner thread and main query thread (the one calling
   /// GetNext()) for all fields below.  If this lock and any other locks needs to be taken
   /// together, this lock must be taken first.
-  boost::mutex lock_;
+  SpinLock lock_;
 
   /// Flag signaling that all scanner threads are done.  This could be because they
   /// are finished, an error/cancellation occurred, or the limit was reached.

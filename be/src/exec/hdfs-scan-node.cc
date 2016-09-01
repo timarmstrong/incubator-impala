@@ -322,7 +322,7 @@ Status HdfsScanNode::GetNextInternal(
   // The RowBatchQueue was shutdown either because all scan ranges are complete or a
   // scanner thread encountered an error.  Check status_ to distinguish those cases.
   *eos = true;
-  unique_lock<mutex> l(lock_);
+  unique_lock<SpinLock> l(lock_);
   return status_;
 }
 
@@ -427,7 +427,7 @@ Tuple* HdfsScanNode::InitTemplateTuple(RuntimeState* state,
   // use internal memory.
   Tuple* template_tuple = InitEmptyTemplateTuple(*tuple_desc_);
 
-  unique_lock<mutex> l(lock_);
+  unique_lock<SpinLock> l(lock_);
   for (int i = 0; i < partition_key_slots_.size(); ++i) {
     const SlotDescriptor* slot_desc = partition_key_slots_[i];
     // Exprs guaranteed to be literals, so can safely be evaluated without a row context
@@ -440,7 +440,7 @@ Tuple* HdfsScanNode::InitTemplateTuple(RuntimeState* state,
 Tuple* HdfsScanNode::InitEmptyTemplateTuple(const TupleDescriptor& tuple_desc) {
   Tuple* template_tuple = NULL;
   {
-    unique_lock<mutex> l(lock_);
+    unique_lock<SpinLock> l(lock_);
     template_tuple = Tuple::Create(tuple_desc.byte_size(), scan_node_pool_.get());
   }
   memset(template_tuple, 0, tuple_desc.byte_size());
@@ -448,7 +448,7 @@ Tuple* HdfsScanNode::InitEmptyTemplateTuple(const TupleDescriptor& tuple_desc) {
 }
 
 void HdfsScanNode::TransferToScanNodePool(MemPool* pool) {
-  unique_lock<mutex> l(lock_);
+  unique_lock<SpinLock> l(lock_);
   scan_node_pool_->AcquireData(pool, false);
 }
 
@@ -999,7 +999,7 @@ void HdfsScanNode::ThreadTokenAvailableCb(ThreadResourceMgr::ResourcePool* pool)
     // all_ranges_started_ etc. a chance to grab the lock.
     // TODO: This still leans heavily on starvation-free locks, come up with a more
     // correct way to communicate between this method and ScannerThreadHelper
-    unique_lock<mutex> lock(lock_);
+    unique_lock<SpinLock> lock(lock_);
     // Cases 1, 2, 3.
     if (done_ || all_ranges_started_ ||
         active_scanner_thread_counter_.value() >= progress_.remaining()) {
@@ -1061,7 +1061,7 @@ void HdfsScanNode::ScannerThread() {
     {
       // Check if we have enough resources (thread token and memory) to keep using
       // this thread.
-      unique_lock<mutex> l(lock_);
+      unique_lock<SpinLock> l(lock_);
       if (active_scanner_thread_counter_.value() > 1) {
         if (runtime_state_->resource_pool()->optional_exceeded() ||
             !EnoughMemoryForScannerThread(false)) {
@@ -1112,7 +1112,7 @@ void HdfsScanNode::ScannerThread() {
 
     if (!status.ok()) {
       {
-        unique_lock<mutex> l(lock_);
+        unique_lock<SpinLock> l(lock_);
         // If there was already an error, the main thread will do the cleanup
         if (!status_.ok()) break;
 
@@ -1139,7 +1139,7 @@ void HdfsScanNode::ScannerThread() {
     if (scan_range == NULL && num_unqueued_files == 0) {
       // TODO: Based on the usage pattern of all_ranges_started_, it looks like it is not
       // needed to acquire the lock in x86.
-      unique_lock<mutex> l(lock_);
+      unique_lock<SpinLock> l(lock_);
       // All ranges have been queued and GetNextRange() returned NULL. This means that
       // every range is either done or being processed by another thread.
       all_ranges_started_ = true;
@@ -1291,7 +1291,7 @@ void HdfsScanNode::RangeComplete(const THdfsFileFormat::type& file_type,
 
 void HdfsScanNode::SetDone() {
   {
-    unique_lock<mutex> l(lock_);
+    unique_lock<SpinLock> l(lock_);
     if (done_) return;
     done_ = true;
   }
@@ -1328,7 +1328,7 @@ void HdfsScanNode::ComputeSlotMaterializationOrder(vector<int>* order) const {
 }
 
 void HdfsScanNode::StopAndFinalizeCounters() {
-  unique_lock<mutex> l(lock_);
+  unique_lock<SpinLock> l(lock_);
   if (!counters_running_) return;
   counters_running_ = false;
 
