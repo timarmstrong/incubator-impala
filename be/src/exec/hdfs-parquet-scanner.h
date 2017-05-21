@@ -511,6 +511,11 @@ class HdfsParquetScanner : public HdfsScanner {
   Status AssembleRows(const std::vector<ParquetColumnReader*>& column_readers,
       RowBatch* row_batch, bool* skip_row_group);
 
+  /// Start a new scratch batch - reset the batch to an empty state and initialize the
+  /// tuples in it, based on 'template_tuple_' if non-NULL or by clearing the null bits
+  /// otherwise.
+  Status ResetScratchBatch();
+
   /// Commit num_rows to the given row batch.
   /// Returns OK if the query is not cancelled and hasn't exceeded any mem limits.
   /// Scanner can call this with 0 rows to flush any pending resources (attached pools
