@@ -28,6 +28,7 @@
 #include "exec/parquet-scratch-tuple-batch.h"
 #include "exec/read-write-util.h"
 #include "exprs/timezone_db.h"
+#include "exec/scanner-context.inline.h"
 #include "rpc/thrift-util.h"
 #include "runtime/collection-value-builder.h"
 #include "runtime/tuple-row.h"
@@ -95,7 +96,7 @@ Status ParquetLevelDecoder::Init(const string& filename,
         return Status(TErrorCode::PARQUET_CORRUPT_RLE_BYTES, filename, num_bytes);
       }
       int bit_width = BitUtil::Log2Ceiling64(max_level + 1);
-      Reset(*data, num_bytes, bit_width);
+      rle_decoder_.Reset(*data, num_bytes, bit_width);
       break;
     }
     case parquet::Encoding::BIT_PACKED:
@@ -136,16 +137,17 @@ Status ParquetLevelDecoder::InitCache(MemPool* pool, int cache_size) {
   return Status::OK();
 }
 
-inline int16_t ParquetLevelDecoder::ReadLevel() {
-  bool valid;
-  uint8_t level;
-  if (encoding_ == parquet::Encoding::RLE) {
-    valid = Get(&level);
-  } else {
-    DCHECK_EQ(encoding_, parquet::Encoding::BIT_PACKED);
-    valid = bit_reader_.GetValue(1, &level);
+inline Status ParquetLevelDecoder::ReadLevel(uint8_t* level) {
+  if (UNLIKELY(!CacheHasNext())) {
+    if (num_buffered_values_ == 0) {
+      // No more values to read.
+      return Status(decoding_error_code_, num_buffered_values_, filename_);
+    }
+    int batch_size = min(cache_size_, num_buffered_values_);
+    RETURN_IF_ERROR(CacheNextBatch(batch_size));
   }
-  return LIKELY(valid) ? level : HdfsParquetScanner::INVALID_LEVEL;
+  *level = CacheGetNext();
+  return Status::OK();
 }
 
 Status ParquetLevelDecoder::CacheNextBatch(int batch_size) {
@@ -167,39 +169,15 @@ Status ParquetLevelDecoder::CacheNextBatch(int batch_size) {
 bool ParquetLevelDecoder::FillCache(int batch_size,
     int* num_cached_levels) {
   DCHECK(num_cached_levels != NULL);
-  int num_values = 0;
+  // TODO: we removed validation that the values were in range. We need to do it
+  // if the max is something that fits in the bit-packed values.
   if (encoding_ == parquet::Encoding::RLE) {
-    while (true) {
-      // Add RLE encoded values by repeating the current value this number of times.
-      uint32_t num_repeats_to_set =
-          min<uint32_t>(repeat_count_, batch_size - num_values);
-      memset(cached_levels_ + num_values, current_value_, num_repeats_to_set);
-      num_values += num_repeats_to_set;
-      repeat_count_ -= num_repeats_to_set;
-
-      // Add remaining literal values, if any.
-      uint32_t num_literals_to_set =
-          min<uint32_t>(literal_count_, batch_size - num_values);
-      int num_values_end = min<uint32_t>(num_values + literal_count_, batch_size);
-      for (; num_values < num_values_end; ++num_values) {
-        bool valid = bit_reader_.GetValue(bit_width_, &cached_levels_[num_values]);
-        if (UNLIKELY(!valid || cached_levels_[num_values] > max_level_)) return false;
-      }
-      literal_count_ -= num_literals_to_set;
-
-      if (num_values == batch_size) break;
-      if (UNLIKELY(!NextCounts<int16_t>())) return false;
-      if (repeat_count_ > 0 && current_value_ > max_level_) return false;
-    }
+    *num_cached_levels = rle_decoder_.GetBatch(cached_levels_, batch_size);
   } else {
     DCHECK_EQ(encoding_, parquet::Encoding::BIT_PACKED);
-    for (; num_values < batch_size; ++num_values) {
-      bool valid = bit_reader_.GetValue(1, &cached_levels_[num_values]);
-      if (UNLIKELY(!valid || cached_levels_[num_values] > max_level_)) return false;
-    }
+    *num_cached_levels = bit_reader_.GetValueBatch(1, batch_size, cached_levels_);
   }
-  *num_cached_levels = num_values;
-  return true;
+  return *num_cached_levels == batch_size;
 }
 
 /// Per column type reader. If MATERIALIZED is true, the column values are materialized
@@ -334,6 +312,7 @@ class ScalarColumnReader : public BaseScalarColumnReader {
           continue_execution = parent_->parse_status_.ok();
           continue;
         }
+        DCHECK_GT(num_buffered_values_, 0);
       }
 
       // Fill def/rep level caches if they are empty.
@@ -399,11 +378,13 @@ class ScalarColumnReader : public BaseScalarColumnReader {
 
     uint8_t* curr_tuple = tuple_mem;
     const uint8_t* end_tuple = tuple_mem + max_values * static_cast<int64_t>(tuple_size);
-    while (def_levels_.CacheHasNext() && curr_tuple != end_tuple) {
-      Tuple* tuple = reinterpret_cast<Tuple*>(curr_tuple);
-      int def_level = def_levels_.CacheGetNext();
+    const int tuple_offset = tuple_offset_;
 
-      if (IN_COLLECTION) {
+    if (IN_COLLECTION) {
+      while (def_levels_.CacheHasNext() && curr_tuple != end_tuple) {
+        Tuple* tuple = reinterpret_cast<Tuple*>(curr_tuple);
+        void* slot = tuple->GetSlot(tuple_offset);
+        int def_level = def_levels_.CacheGetNext();
         if (def_level < def_level_of_immediate_repeated_ancestor()) {
           // A containing repeated field is empty or NULL. Skip the value but
           // move to the next repetition level if necessary.
@@ -417,18 +398,59 @@ class ScalarColumnReader : public BaseScalarColumnReader {
           void* pos_slot = tuple->GetSlot(pos_slot_desc()->tuple_offset());
           *reinterpret_cast<int64_t*>(pos_slot) = pos_current_value_++;
         }
+        if (MATERIALIZED) {
+          if (def_level >= max_def_level()) {
+            bool continue_execution = ReadSlotInternal<IS_DICT_ENCODED>(tuple, slot, pool);
+            if (UNLIKELY(!continue_execution)) return false;
+          } else {
+            tuple->SetNull(null_indicator_offset_);
+          }
+        }
+        curr_tuple += tuple_size;
       }
+    } else {
+      while (def_levels_.CacheHasNext() && curr_tuple != end_tuple) {
+        bool run_is_null = def_levels_.CachePeekNext() < max_def_level();
+        // TODO: div would be expensive for short runs.
+        int remaining_tuples = tuple_size == 0 ? 999999999 : (end_tuple - curr_tuple) / tuple_size;
 
-      if (MATERIALIZED) {
-        if (def_level >= max_def_level()) {
-          bool continue_execution = ReadSlot<IS_DICT_ENCODED>(tuple, pool);
-          if (UNLIKELY(!continue_execution)) return false;
-        } else {
-          tuple->SetNull(null_indicator_offset_);
+        // TODO: remove caching, instead use RleDecoderdirectly.
+        int max_run_len = min(def_levels_.CacheRemaining(), remaining_tuples);
+        int64_t run_len = 0;
+        for (int i = 0; i < max_run_len; ++i) {
+          def_levels_.CacheGetNext();
+          run_len++;
+          if (run_is_null != (def_levels_.CachePeekNext() < max_def_level())) break;
+        }
+        if (MATERIALIZED) {
+          if (run_is_null) {
+#pragma unroll
+            for (int64_t i = 0; i < run_len; ++i) {
+              Tuple* tuple = reinterpret_cast<Tuple*>(curr_tuple);
+              tuple->SetNull(null_indicator_offset_);
+            }
+            curr_tuple += tuple_size;
+          } else {
+
+            if (IS_DICT_ENCODED) {
+              // TODO: doesn't handle various conversions
+              if (UNLIKELY(!dict_decoder_.GetNextValues(curr_tuple + tuple_offset, run_len, tuple_size))) {
+                SetDictDecodeError();
+                return false;
+              }
+              curr_tuple += run_len * tuple_size;
+            } else {
+              for (int64_t i = 0; i < run_len; ++i) {
+                Tuple* tuple = reinterpret_cast<Tuple*>(curr_tuple);
+                void* slot = tuple->GetSlot(tuple_offset);
+                bool continue_execution = ReadSlotInternal<IS_DICT_ENCODED>(tuple, slot, pool);
+                if (UNLIKELY(!continue_execution)) return false;
+                curr_tuple += tuple_size;
+              }
+            }
+          }
         }
       }
-
-      curr_tuple += tuple_size;
     }
     *num_values = (curr_tuple - tuple_mem) / tuple_size;
     return true;
@@ -489,7 +511,11 @@ class ScalarColumnReader : public BaseScalarColumnReader {
   /// Force inlining - GCC does not always inline this into hot loops.
   template<bool IS_DICT_ENCODED>
   ALWAYS_INLINE bool ReadSlot(Tuple* tuple, MemPool* pool) {
-    void* slot = tuple->GetSlot(tuple_offset_);
+    return ReadSlotInternal<IS_DICT_ENCODED>(tuple, tuple->GetSlot(tuple_offset_), pool);
+  }
+
+  template<bool IS_DICT_ENCODED>
+  ALWAYS_INLINE bool ReadSlotInternal(Tuple* tuple, void* slot, MemPool* pool) {
     // Use an uninitialized stack allocation for temporary value to avoid running
     // constructors doing work unnecessarily, e.g. if T == StringValue.
     uint8_t val_buf[sizeof(T)] alignas(T);
@@ -706,9 +732,11 @@ bool ScalarColumnReader<TimestampValue, true>::ValidateSlot(
 
 class BoolColumnReader : public BaseScalarColumnReader {
  public:
-  BoolColumnReader(HdfsParquetScanner* parent, const SchemaNode& node,
-      const SlotDescriptor* slot_desc)
-    : BaseScalarColumnReader(parent, node, slot_desc) {
+  BoolColumnReader(
+      HdfsParquetScanner* parent, const SchemaNode& node, const SlotDescriptor* slot_desc)
+    : BaseScalarColumnReader(parent, node, slot_desc),
+      unpacked_value_buffer_pos_(0),
+      num_unpacked_values_(0) {
     if (slot_desc_ != NULL) DCHECK_EQ(slot_desc_->type().type, TYPE_BOOLEAN);
   }
 
@@ -740,6 +768,8 @@ class BoolColumnReader : public BaseScalarColumnReader {
   virtual Status InitDataPage(uint8_t* data, int size) {
     // Initialize bool decoder
     bool_values_ = BitReader(data, size);
+    unpacked_value_buffer_pos_ = 0;
+    num_unpacked_values_ = 0;
     return Status::OK();
   }
 
@@ -770,17 +800,30 @@ class BoolColumnReader : public BaseScalarColumnReader {
   /// Returns false if execution should be aborted for some reason, e.g. parse_error_ is
   /// set, the query is cancelled, or the scan node limit was reached. Otherwise returns
   /// true.
-  template<bool IN_COLLECTION>
-  inline bool ReadSlot(Tuple* tuple, MemPool* pool)  {
-    void* slot = tuple->GetSlot(tuple_offset_);
-    if (!bool_values_.GetValue(1, reinterpret_cast<bool*>(slot))) {
-      parent_->parse_status_ = Status("Invalid bool column.");
-      return false;
+  template <bool IN_COLLECTION>
+  inline bool ReadSlot(void* slot, MemPool* pool) {
+    if (UNLIKELY(unpacked_value_buffer_pos_ == num_unpacked_values_)) {
+      unpacked_value_buffer_pos_ = 0;
+      num_unpacked_values_ = bool_values_.GetValueBatch(
+          1, UNPACKED_VALUE_BUFFER_LEN, unpacked_value_buffer_);
+      if (num_unpacked_values_ == 0) {
+        parent_->parse_status_ = Status("Invalid bool column.");
+        return false;
+      }
     }
+    bool* bool_slot = reinterpret_cast<bool*>(slot);
+    *bool_slot = unpacked_value_buffer_[unpacked_value_buffer_pos_++];
     return NextLevels<IN_COLLECTION>();
   }
 
   BitReader bool_values_;
+
+  static const int UNPACKED_VALUE_BUFFER_LEN = 1024;
+  // BitReader::GetBatch() requires reading in multiples of 32.
+  static_assert(UNPACKED_VALUE_BUFFER_LEN % 32 == 0, "");
+  bool unpacked_value_buffer_[UNPACKED_VALUE_BUFFER_LEN];
+  int unpacked_value_buffer_pos_;
+  int num_unpacked_values_;
 };
 
 // Change 'val_count' to zero to exercise IMPALA-5197. This verifies the error handling
@@ -1173,19 +1216,21 @@ bool BaseScalarColumnReader::NextLevels() {
   --num_buffered_values_;
 
   // Definition level is not present if column and any containing structs are required.
-  def_level_ = max_def_level() == 0 ? 0 : def_levels_.ReadLevel();
-  // The compiler can optimize these two conditions into a single branch by treating
-  // def_level_ as unsigned.
-  if (UNLIKELY(def_level_ < 0 || def_level_ > max_def_level())) {
-    parent_->parse_status_.MergeStatus(Status(Substitute("Corrupt Parquet file '$0': "
-        "invalid def level $1 > max def level $2 for column '$3'", filename(),
-        def_level_, max_def_level(), schema_element().name)));
-    return false;
+  if (max_def_level() == 0) {
+    def_level_ = 0;
+  } else {
+    uint8_t level;
+    parent_->parse_status_.MergeStatus(def_levels_.ReadLevel(&level));
+    if (UNLIKELY(!parent_->parse_status_.ok())) return false;
+    def_level_ = level;
   }
 
   if (ADVANCE_REP_LEVEL && max_rep_level() > 0) {
     // Repetition level is only present if this column is nested in any collection type.
-    rep_level_ = rep_levels_.ReadLevel();
+    uint8_t level;
+    parent_->parse_status_.MergeStatus(rep_levels_.ReadLevel(&level));
+    if (UNLIKELY(!parent_->parse_status_.ok())) return false;
+    rep_level_ = level;
     // Reset position counter if we are at the start of a new parent collection.
     if (rep_level_ <= max_rep_level() - 1) pos_current_value_ = 0;
   }

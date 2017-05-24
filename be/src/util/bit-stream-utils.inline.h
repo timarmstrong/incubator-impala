@@ -20,6 +20,7 @@
 #define IMPALA_UTIL_BIT_STREAM_UTILS_INLINE_H
 
 #include "common/compiler-util.h"
+#include "util/bit-packing.inline.h"
 #include "util/bit-stream-utils.h"
 
 namespace impala {
@@ -85,67 +86,31 @@ inline bool BitWriter::PutVlqInt(int32_t v) {
   return result;
 }
 
-/// Force inlining - this is used in perf-critical loops in Parquet and GCC often doesn't
-/// inline it in cases where it's beneficial.
-template <typename T>
-ALWAYS_INLINE inline bool BitReader::GetValue(int num_bits, T* v) {
-  DCHECK(num_bits == 0 || buffer_ != NULL);
-  // TODO: revisit this limit if necessary
-  DCHECK_LE(num_bits, MAX_BITWIDTH);
-  DCHECK_LE(num_bits, sizeof(T) * 8);
+template<typename T>
+inline int BitReader::GetValueBatch(int bit_width, int num_values, T* v) {
+  DCHECK(buffer_pos_ != NULL);
+  DCHECK_GE(bit_width, 0);
+  DCHECK_LE(bit_width, MAX_BITWIDTH);
+  DCHECK_LE(bit_width, sizeof(T) * 8);
+  DCHECK_GE(num_values, 0);
 
-  // First do a cheap check to see if we may read past the end of the stream, using
-  // constant upper bounds for 'bit_offset_' and 'num_bits'.
-  if (UNLIKELY(byte_offset_ + sizeof(buffered_values_) + MAX_BITWIDTH / 8 > max_bytes_)) {
-    // Now do the precise check.
-    if (UNLIKELY(byte_offset_ * 8 + bit_offset_ + num_bits > max_bytes_ * 8)) {
-      return false;
-    }
-  }
-
-  DCHECK_GE(bit_offset_, 0);
-  DCHECK_LE(bit_offset_, 64);
-  *v = BitUtil::TrailingBits(buffered_values_, bit_offset_ + num_bits) >> bit_offset_;
-
-  bit_offset_ += num_bits;
-  if (bit_offset_ >= 64) {
-    byte_offset_ += 8;
-    bit_offset_ -= 64;
-
-    int bytes_remaining = max_bytes_ - byte_offset_;
-    if (LIKELY(bytes_remaining >= 8)) {
-      memcpy(&buffered_values_, buffer_ + byte_offset_, 8);
-    } else {
-      memcpy(&buffered_values_, buffer_ + byte_offset_, bytes_remaining);
-    }
-
-    // Read bits of v that crossed into new buffered_values_
-    *v |= BitUtil::TrailingBits(buffered_values_, bit_offset_)
-          << (num_bits - bit_offset_);
-  }
-  DCHECK_LE(bit_offset_, 64);
-  return true;
+  auto result = BitPacking::UnpackValues(bit_width, buffer_pos_,
+      bytes_left(), num_values, v);
+  buffer_pos_ = result.first;
+  DCHECK_LE(buffer_pos_, buffer_end_);
+  DCHECK_LE(result.second, num_values);
+  return static_cast<int>(result.second);
 }
 
 template<typename T>
-inline bool BitReader::GetAligned(int num_bytes, T* v) {
+inline bool BitReader::GetBytes(int num_bytes, T* v) {
+  DCHECK(buffer_pos_ != NULL);
+  DCHECK_GE(num_bytes, 0);
   DCHECK_LE(num_bytes, sizeof(T));
-  int bytes_read = BitUtil::Ceil(bit_offset_, 8);
-  if (UNLIKELY(byte_offset_ + bytes_read + num_bytes > max_bytes_)) return false;
+  if (UNLIKELY(buffer_pos_ + num_bytes > buffer_end_)) return false;
 
-  // Advance byte_offset to next unread byte and read num_bytes
-  byte_offset_ += bytes_read;
-  memcpy(v, buffer_ + byte_offset_, num_bytes);
-  byte_offset_ += num_bytes;
-
-  // Reset buffered_values_
-  bit_offset_ = 0;
-  int bytes_remaining = max_bytes_ - byte_offset_;
-  if (LIKELY(bytes_remaining >= 8)) {
-    memcpy(&buffered_values_, buffer_ + byte_offset_, 8);
-  } else {
-    memcpy(&buffered_values_, buffer_ + byte_offset_, bytes_remaining);
-  }
+  memcpy(v, buffer_pos_, num_bytes);
+  buffer_pos_ += num_bytes;
   return true;
 }
 
@@ -155,7 +120,7 @@ inline bool BitReader::GetVlqInt(int32_t* v) {
   uint8_t byte = 0;
   do {
     if (UNLIKELY(shift >= MAX_VLQ_BYTE_LEN * 7)) return false;
-    if (!GetAligned<uint8_t>(1, &byte)) return false;
+    if (!GetBytes<uint8_t>(1, &byte)) return false;
     *v |= (byte & 0x7F) << shift;
     shift += 7;
   } while ((byte & 0x80) != 0);

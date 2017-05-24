@@ -23,6 +23,7 @@
 #include "common/compiler-util.h"
 #include "util/bit-stream-utils.inline.h"
 #include "util/bit-util.h"
+#include "util/cpu-info.h"
 
 namespace impala {
 
@@ -76,7 +77,8 @@ namespace impala {
 /// (total 26 bytes, 1 byte overhead)
 //
 
-/// Decoder class for RLE encoded data.
+/// Decoder class for RLE encoded data that produces values of type T.
+template <typename T>
 class RleDecoder {
  public:
   /// Create a decoder object. buffer/buffer_len is the decoded data.
@@ -86,7 +88,9 @@ class RleDecoder {
       bit_width_(bit_width),
       current_value_(0),
       repeat_count_(0),
-      literal_count_(0) {
+      literal_count_(0),
+      num_buffered_literals_(0),
+      literal_buffer_pos_(0) {
     DCHECK_GE(bit_width_, 0);
     DCHECK_LE(bit_width_, BitReader::MAX_BITWIDTH);
   }
@@ -101,24 +105,64 @@ class RleDecoder {
     current_value_ = 0;
     repeat_count_ = 0;
     literal_count_ = 0;
+    num_buffered_literals_ = 0;
+    literal_buffer_pos_ = 0;
   }
 
-  /// Gets the next value.  Returns false if there are no more.
-  template<typename T>
-  bool Get(T* val);
+  /// Gets up to the next value. Returns false if there are no more.
+  bool Get(T* val) { return GetBatch(val, 1) == 1; }
+
+  /// Reads up to 'max_values' values into 'vals'. Returns the number actually read,
+  /// or 0 if there are no more. 'max_values' >= 1.
+  int GetBatch(T* vals, int max_values);
+
+  uint32_t NextNumRepeats() {
+    if (repeat_count_ > 0) return repeat_count_;
+    if (literal_count_ == 0) {
+      // Ignore return value - caller can infer from NextNumRepeats()/NextNumLiterals()
+      NextCounts();
+    }
+    return repeat_count_;
+  }
+
+  uint32_t NextNumLiterals() {
+    if (literal_count_ > 0) return literal_count_;
+    if (repeat_count_ == 0) {
+      // Ignore return value - caller must infer from NumRepeats()/NumLiterals()
+      NextCounts();
+    }
+    return literal_count_;
+  }
+
+  T GetRepeatedValue(uint32_t num_repeats_to_consume) {
+    DCHECK_GT(num_repeats_to_consume, 0);
+    DCHECK_GE(repeat_count_, num_repeats_to_consume);
+    repeat_count_ -= num_repeats_to_consume;
+    return current_value_;
+  }
+
+  bool GetLiteralValues(uint32_t num_literals_to_consume, T* values);
 
  protected:
-  /// Fills literal_count_ and repeat_count_ with next values. Returns false if there
+  /// Fills literal_count_ and repeat_count_ with next values. Returns false if there:
   /// are no more.
-  template<typename T>
   bool NextCounts();
 
   BitReader bit_reader_;
   /// Number of bits needed to encode the value. Must be between 0 and 64.
   int bit_width_;
-  uint64_t current_value_;
+  T current_value_;
   uint32_t repeat_count_;
   uint32_t literal_count_;
+
+  /// Size of buffer for literal values. Large enough to decoded a full batch of 32
+  /// literals.
+  static const int LITERAL_BUFFER_LEN = 32;
+  /// Buffer containing 'num_buffered_literals_' values that have been read up
+  /// to 'literal_buffer_pos_'.
+  T literal_buffer_[LITERAL_BUFFER_LEN];
+  int num_buffered_literals_;
+  int literal_buffer_pos_;
 };
 
 /// Class to incrementally build the rle data.   This class does not allocate any memory.
@@ -245,34 +289,124 @@ class RleEncoder {
   uint8_t* literal_indicator_byte_;
 };
 
-// Force inlining - this is used in perf-critical loops in Parquet and GCC often
-// doesn't inline it in cases where it's beneficial.
+// TODO: more attributes
 template <typename T>
-ALWAYS_INLINE inline bool RleDecoder::Get(T* val) {
-  DCHECK_GE(bit_width_, 0);
-  // Profiling has shown that the quality and performance of the generated code is very
-  // sensitive to the exact shape of this check. For example, the version below performs
-  // significantly better than UNLIKELY(literal_count_ == 0 && repeat_count_ == 0)
-  if (repeat_count_ == 0) {
-    if (literal_count_ == 0) {
-      if (!NextCounts<T>()) return false;
-    }
+__attribute__ ((target ("avx2")))
+static void DuplicateValueAvx2(T val, int count, T* dst) {
+  # pragma unroll
+  for (int i = 0; i < count; ++i) {
+    dst[i] = val;
   }
-
-  if (LIKELY(repeat_count_ > 0)) {
-    *val = current_value_;
-    --repeat_count_;
-  } else {
-    DCHECK_GT(literal_count_, 0);
-    if (UNLIKELY(!bit_reader_.GetValue(bit_width_, val))) return false;
-    --literal_count_;
-  }
-
-  return true;
 }
 
-template<typename T>
-bool RleDecoder::NextCounts() {
+template <typename T>
+static void DuplicateValueGeneric(T val, int count, T* dst) {
+  # pragma unroll
+  for (int i = 0; i < count; ++i) {
+    dst[i] = val;
+  }
+}
+
+template <typename T>
+static void DuplicateValue(T val, int count, T* dst) {
+  if (sizeof(T) == sizeof(uint8_t)) {
+    memset(dst, val, count);
+    return;
+  }
+  if (CpuInfo::IsSupported(CpuInfo::AVX2)) {
+    DuplicateValueAvx2(val, count, dst);
+  } else {
+    DuplicateValueGeneric(val, count, dst);
+  }
+}
+
+template <typename T>
+inline int RleDecoder<T>::GetBatch(T* vals, int max_values) {
+  DCHECK_GE(bit_width_, 0);
+  DCHECK_GE(max_values, 1);
+
+  // LOG(ERROR) << (void*)this << " repeat_count_ " << repeat_count_ << " literal_count_ " << literal_count_;
+  T* vals_pos = vals;
+  int values_remaining = max_values;
+  while (true) {
+    if (repeat_count_ > 0) {
+      uint32_t num_to_copy = std::min<uint32_t>(values_remaining, repeat_count_);
+      DuplicateValueGeneric(current_value_, num_to_copy, vals_pos);
+      vals_pos += num_to_copy;
+      repeat_count_ -= num_to_copy;
+      values_remaining -= num_to_copy;
+      // LOG(ERROR) << "repeat_count_ " << repeat_count_<< " values_remaining " << values_remaining << " num_to_copy " << num_to_copy;
+      if (values_remaining == 0) return max_values;
+    } else if (literal_count_ > 0) {
+      uint32_t num_to_get = std::min<uint32_t>(values_remaining, literal_count_);
+      if (!GetLiteralValues(num_to_get, vals_pos)) return max_values - values_remaining;
+      vals_pos += num_to_get;
+      values_remaining -= num_to_get;
+      if (values_remaining == 0) return max_values;
+    }
+
+    // Get the next run of repeat or literal values.
+    DCHECK_EQ(repeat_count_, 0);
+    DCHECK_EQ(literal_count_, 0);
+    if (!NextCounts()) return max_values - values_remaining;
+  }
+}
+
+template <typename T>
+inline bool RleDecoder<T>::GetLiteralValues(uint32_t num_to_consume, T* values) {
+  DCHECK_GE(num_to_consume, 0);
+  DCHECK_GE(literal_count_, num_to_consume);
+  // Consume values until we have enough or fail to decode.
+  while (true) {
+    // Copy the buffered literals.
+    int remaining_buffered_literals = num_buffered_literals_ - literal_buffer_pos_;
+    // LOG(ERROR) << "remaining_buffered_literals " << remaining_buffered_literals << " num_buffered_literals_ "
+    //    << num_buffered_literals_ << "  literal_buffer_pos_ " << literal_buffer_pos_;
+    if (remaining_buffered_literals > 0) {
+      uint32_t num_to_copy =
+          std::min<uint32_t>(num_to_consume, remaining_buffered_literals);
+      memcpy(values, &literal_buffer_[literal_buffer_pos_], sizeof(T) * num_to_copy);
+      values += num_to_copy;
+      literal_buffer_pos_ += num_to_copy;
+      literal_count_ -= num_to_copy;
+      num_to_consume -= num_to_copy;
+      // LOG(ERROR) << "literal_buffer_pos__ " << literal_buffer_pos_ << " literal_count_ " << literal_count_ << " values_remaining " << values_remaining << " num_to_copy " << num_to_copy;
+      if (num_to_consume == 0) return true;
+      DCHECK_EQ(literal_buffer_pos_, num_buffered_literals_);
+    }
+
+    DCHECK_GE(literal_count_, 0);
+    DCHECK_EQ(num_buffered_literals_, literal_buffer_pos_);
+    // Try to copy some literals directly to the output, bypassing 'literal_buffer_'.
+    // Need to round to a batch of 32 if we're consuming partial run to avoid ending
+    // on a non-byte boundery.
+    uint32_t num_to_copy = literal_count_ < num_to_consume ?
+        literal_count_ :
+        BitUtil::RoundDownToPowerOf2(num_to_consume, 32);
+    if (num_to_copy > 0) {
+      // If we couldn't read the expected number, that means the input was truncated.
+      int num_read = bit_reader_.GetValueBatch(bit_width_, num_to_copy, values);
+      if (num_read < num_to_copy) return false;
+      literal_count_ -= num_to_copy;
+      num_to_consume -= num_to_copy;
+      values += num_to_copy;
+      // LOG(ERROR) << "literal_count_ " << literal_count_ << " values_remaining " << values_remaining << " num_to_copy " << num_to_copy;
+      if (num_to_consume == 0) return true;
+    }
+
+    // We can't return a full batch - buffer a batch of literals and return some of them.
+    if (literal_count_ > 0) {
+      uint32_t num_to_buffer = std::min<uint32_t>(LITERAL_BUFFER_LEN, literal_count_);
+      // LOG(ERROR) << "literal_buffer_pos_ " << literal_buffer_pos_ << " literal_count_ " << literal_count_ << " values_remaining " << values_remaining << " num_to_buffer " << num_to_buffer;
+      num_buffered_literals_ =
+          bit_reader_.GetValueBatch(bit_width_, num_to_buffer, literal_buffer_);
+      literal_buffer_pos_ = 0;
+    }
+  }
+}
+
+template <typename T>
+bool RleDecoder<T>::NextCounts() {
   // Read the next run's indicator int, it could be a literal or repeated run.
   // The int is encoded as a vlq-encoded value.
   int32_t indicator_value = 0;
@@ -285,7 +419,7 @@ bool RleDecoder::NextCounts() {
     if (UNLIKELY(literal_count_ == 0)) return false;
   } else {
     repeat_count_ = indicator_value >> 1;
-    bool result = bit_reader_.GetAligned<T>(
+    bool result = bit_reader_.GetBytes<T>(
         BitUtil::Ceil(bit_width_, 8), reinterpret_cast<T*>(&current_value_));
     if (UNLIKELY(!result || repeat_count_ == 0)) return false;
   }

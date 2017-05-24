@@ -35,14 +35,7 @@ class MemPool;
 /// Level values are unsigned 8-bit integers because we support a maximum nesting
 /// depth of 100, as enforced by the FE. Using a small type saves memory and speeds up
 /// populating the level cache (e.g., with RLE we can memset() repeated values).
-///
-/// Inherits from RleDecoder instead of containing one for performance reasons.
-/// The containment design would require two BitReaders per column reader. The extra
-/// BitReader causes enough bloat for a column reader to require another cache line.
-/// TODO: It is not clear whether the inheritance vs. containment choice still makes
-/// sense with column-wise materialization. The containment design seems cleaner and
-/// we should revisit.
-class ParquetLevelDecoder : public RleDecoder {
+class ParquetLevelDecoder {
  public:
   ParquetLevelDecoder(bool is_def_level_decoder)
     : cached_levels_(NULL),
@@ -62,8 +55,8 @@ class ParquetLevelDecoder : public RleDecoder {
       MemPool* cache_pool, int cache_size, int max_level, int num_buffered_values,
       uint8_t** data, int* data_size);
 
-  /// Returns the next level or INVALID_LEVEL if there was an error.
-  inline int16_t ReadLevel();
+  /// Read a single level value into 'level'. Returns an error if it could not be read.
+  Status ReadLevel(uint8_t* level);
 
   /// Decodes and caches the next batch of levels. Resets members associated with the
   /// cache. Returns a non-ok status if there was a problem decoding a level, or if a
@@ -72,6 +65,10 @@ class ParquetLevelDecoder : public RleDecoder {
 
   /// Functions for working with the level cache.
   inline bool CacheHasNext() const { return cached_level_idx_ < num_cached_levels_; }
+  inline uint8_t CachePeekNext() {
+    DCHECK_LT(cached_level_idx_, num_cached_levels_);
+    return cached_levels_[cached_level_idx_];
+  }
   inline uint8_t CacheGetNext() {
     DCHECK_LT(cached_level_idx_, num_cached_levels_);
     return cached_levels_[cached_level_idx_++];
@@ -93,6 +90,12 @@ class ParquetLevelDecoder : public RleDecoder {
   /// values written to the cache in *num_cached_levels. Returns false if there was
   /// an error decoding a level or if there was a level value greater than max_level_.
   bool FillCache(int batch_size, int* num_cached_levels);
+
+  /// RLE decoder used if the encoding is RLE.
+  RleDecoder<uint8_t> rle_decoder_;
+
+  /// Bit reader used if the encoding is BIT_PACKED.
+  BitReader bit_reader_;
 
   /// Buffer for a batch of levels. The memory is allocated and owned by a pool in
   /// passed in Init().

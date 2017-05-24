@@ -35,6 +35,8 @@ template <typename OutType>
 std::pair<const uint8_t*, int64_t> BitPacking::UnpackValues(int bit_width,
     const uint8_t* __restrict__ in, int64_t in_bytes, int64_t num_values,
     OutType* __restrict__ out) {
+  DCHECK_LE(bit_width, sizeof(OutType) * CHAR_BIT)
+    << "BIT_WIDTH too high for output type";
   constexpr int BATCH_SIZE = 32;
   const int64_t max_input_values =
       bit_width ? (in_bytes * CHAR_BIT) / bit_width : num_values;
@@ -116,8 +118,8 @@ const uint8_t* BitPacking::Unpack32Values(
     const uint8_t* __restrict__ in, int64_t in_bytes, OutType* __restrict__ out) {
   static_assert(BIT_WIDTH >= 0, "BIT_WIDTH too low");
   static_assert(BIT_WIDTH <= 32, "BIT_WIDTH > 32");
-  static_assert(
-      BIT_WIDTH <= sizeof(OutType) * CHAR_BIT, "BIT_WIDTH too high for output type");
+  DCHECK_LE(BIT_WIDTH, sizeof(OutType) * CHAR_BIT)
+      << "BIT_WIDTH too high for output type";
   constexpr int BYTES_TO_READ = BitUtil::RoundUpNumBytes(32 * BIT_WIDTH);
   DCHECK_GE(in_bytes, BYTES_TO_READ);
 
@@ -163,8 +165,8 @@ const uint8_t* BitPacking::UnpackUpTo32Values(const uint8_t* __restrict__ in,
     int64_t in_bytes, int num_values, OutType* __restrict__ out) {
   static_assert(BIT_WIDTH >= 0, "BIT_WIDTH too low");
   static_assert(BIT_WIDTH <= 32, "BIT_WIDTH > 32");
-  static_assert(
-      BIT_WIDTH <= sizeof(OutType) * CHAR_BIT, "BIT_WIDTH too high for output type");
+  DCHECK_LE(BIT_WIDTH, sizeof(OutType) * CHAR_BIT)
+      << "BIT_WIDTH too high for output type";
   constexpr int MAX_BATCH_SIZE = 31;
   const int BYTES_TO_READ = BitUtil::RoundUpNumBytes(num_values * BIT_WIDTH);
   DCHECK_GE(in_bytes, BYTES_TO_READ);

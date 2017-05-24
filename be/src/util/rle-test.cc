@@ -72,26 +72,23 @@ TEST(BitArray, TestBool) {
   BitReader reader(buffer, len);
   // Ensure it returns the same results after Reset().
   for (int trial = 0; trial < 2; ++trial) {
+    uint8_t values[8];
+    ASSERT_EQ(8, reader.GetValueBatch(1, 8, values));
     for (int i = 0; i < 8; ++i) {
-      bool val = false;
-      bool result = reader.GetValue(1, &val);
-      EXPECT_TRUE(result);
-      EXPECT_EQ(val, i % 2);
+      EXPECT_EQ(values[i], i % 2);
     }
 
+    ASSERT_EQ(8, reader.GetValueBatch(1, 8, values));
     for (int i = 0; i < 8; ++i) {
-      bool val = false;
-      bool result = reader.GetValue(1, &val);
-      EXPECT_TRUE(result);
       switch (i) {
         case 0:
         case 1:
         case 4:
         case 5:
-          EXPECT_EQ(val, false);
+          EXPECT_EQ(values[i], false);
           break;
         default:
-          EXPECT_EQ(val, true);
+          EXPECT_EQ(values[i], true);
           break;
       }
     }
@@ -116,11 +113,10 @@ void TestBitArrayValues(int bit_width, int num_vals) {
   BitReader reader(buffer, len);
   // Ensure it returns the same results after Reset().
   for (int trial = 0; trial < 2; ++trial) {
+    uint64_t vals[num_vals];
+    ASSERT_EQ(num_vals, reader.GetValueBatch(bit_width, num_vals, vals));
     for (int i = 0; i < num_vals; ++i) {
-      int64_t val;
-      bool result = reader.GetValue(bit_width, &val);
-      EXPECT_TRUE(result);
-      EXPECT_EQ(val, i % mod);
+      EXPECT_EQ(vals[i], i % mod);
     }
     EXPECT_EQ(reader.bytes_left(), 0);
     reader.Reset(buffer, len);
@@ -137,44 +133,44 @@ TEST(BitArray, TestValues) {
   }
 }
 
-// Test some mixed values
+// Test writing then reading a stream with values of mixed bit widths.
 TEST(BitArray, TestMixed) {
-  const int len = 1024;
-  uint8_t buffer[len];
+  const int num_values = 1024;
+  const int buffer_len = num_values * 2; // Need up to 2 bytes per value.
+  uint8_t buffer[buffer_len];
   bool parity = true;
 
-  BitWriter writer(buffer, len);
-  for (int i = 0; i < len; ++i) {
-    bool result;
+  BitWriter writer(buffer, buffer_len);
+  for (int i = 0; i < num_values; ++i) {
     if (i % 2 == 0) {
-      result = writer.PutValue(parity, 1);
+      EXPECT_TRUE(writer.PutValue(parity, 1));
       parity = !parity;
     } else {
-      result = writer.PutValue(i, 10);
+      EXPECT_TRUE(writer.PutValue(i, 10));
     }
-    EXPECT_TRUE(result);
+    // Advance to the next byte boundary since we don't support unpacking mixed
+    // bitwidths together.
+    writer.Flush(true);
   }
   writer.Flush();
 
   parity = true;
-  BitReader reader(buffer, len);
+  BitReader reader(buffer, buffer_len);
   // Ensure it returns the same results after Reset().
   for (int trial = 0; trial < 2; ++trial) {
-    for (int i = 0; i < len; ++i) {
-      bool result;
+    for (int i = 0; i < num_values; ++i) {
       if (i % 2 == 0) {
-        bool val;
-        result = reader.GetValue(1, &val);
+        uint8_t val;
+        EXPECT_EQ(1, reader.GetValueBatch(1, 1, &val));
         EXPECT_EQ(val, parity);
         parity = !parity;
       } else {
         int val;
-        result = reader.GetValue(10, &val);
+        EXPECT_EQ(1, reader.GetValueBatch(10, 1, &val));
         EXPECT_EQ(val, i);
       }
-      EXPECT_TRUE(result);
     }
-    reader.Reset(buffer, len);
+    reader.Reset(buffer, buffer_len);
   }
 }
 
@@ -203,7 +199,7 @@ void ValidateRle(const vector<int>& values, int bit_width,
   }
 
   // Verify read
-  RleDecoder decoder(buffer, len, bit_width);
+  RleDecoder<uint64_t> decoder(buffer, len, bit_width);
   // Ensure it returns the same results after Reset().
   for (int trial = 0; trial < 2; ++trial) {
     for (int i = 0; i < values.size(); ++i) {
@@ -287,7 +283,7 @@ TEST(Rle, BitWidthZeroRepeated) {
   uint8_t buffer[1];
   const int num_values = 15;
   buffer[0] = num_values << 1; // repeated indicator byte
-  RleDecoder decoder(buffer, sizeof(buffer), 0);
+  RleDecoder<uint8_t> decoder(buffer, sizeof(buffer), 0);
   // Ensure it returns the same results after Reset().
   for (int trial = 0; trial < 2; ++trial) {
     uint8_t val;
@@ -305,7 +301,7 @@ TEST(Rle, BitWidthZeroLiteral) {
   uint8_t buffer[1];
   const int num_groups = 4;
   buffer[0] = num_groups << 1 | 1; // literal indicator byte
-  RleDecoder decoder = RleDecoder(buffer, sizeof(buffer), 0);
+  RleDecoder<uint8_t> decoder(buffer, sizeof(buffer), 0);
   // Ensure it returns the same results after Reset().
   for (int trial = 0; trial < 2; ++trial) {
     const int num_values = num_groups * 8;
@@ -402,7 +398,7 @@ TEST(BitRle, Overflow) {
     EXPECT_LE(bytes_written, len);
     EXPECT_GT(num_added, 0);
 
-    RleDecoder decoder(buffer, bytes_written, bit_width);
+    RleDecoder<uint32_t> decoder(buffer, bytes_written, bit_width);
     // Ensure it returns the same results after Reset().
     for (int trial = 0; trial < 2; ++trial) {
       parity = true;
@@ -426,7 +422,7 @@ TEST(BitRle, Overflow) {
 TEST(Rle, ZeroLiteralOrRepeatCount) {
   const int len = 1024;
   uint8_t buffer[len];
-  RleDecoder decoder(buffer, len, 0);
+  RleDecoder<uint64_t> decoder(buffer, len, 0);
   uint64_t val;
 
   // Test the RLE repeated values path.

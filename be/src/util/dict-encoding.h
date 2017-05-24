@@ -193,7 +193,7 @@ class DictDecoderBase {
   virtual void GetValue(int index, void* buffer) = 0;
 
  protected:
-  RleDecoder data_decoder_;
+  RleDecoder<int> data_decoder_;
 };
 
 template<typename T>
@@ -226,6 +226,9 @@ class DictDecoder : public DictDecoderBase {
   /// For StringValues, this does not make a copy of the data.  Instead,
   /// the string data is from the dictionary buffer passed into the c'tor.
   bool GetNextValue(T* value);
+
+
+  bool GetNextValues(uint8_t* buf, int64_t count, int64_t byte_stride);
 
  private:
   std::vector<T> dict_;
@@ -289,7 +292,7 @@ inline int DictEncoder<StringValue>::AddToTable(const StringValue& value,
 // Force inlining - GCC does not always inline this into hot loops in Parquet scanner.
 template <typename T>
 ALWAYS_INLINE inline bool DictDecoder<T>::GetNextValue(T* value) {
-  int index = -1; // Initialize to avoid compiler warning.
+  int index; // Initialize to avoid compiler warning.
   bool result = data_decoder_.Get(&index);
   // Use & to avoid branches.
   if (LIKELY(result & (index >= 0) & (index < dict_.size()))) {
@@ -297,6 +300,39 @@ ALWAYS_INLINE inline bool DictDecoder<T>::GetNextValue(T* value) {
     return true;
   }
   return false;
+}
+
+template <typename T>
+ALWAYS_INLINE inline bool DictDecoder<T>::GetNextValues(uint8_t* buf, int64_t count, int64_t byte_stride) {
+  int indices[count];
+  while (count > 0) {
+    const size_t dict_size = dict_.size();
+    uint32_t num_repeats = data_decoder_.NextNumRepeats();
+    if (num_repeats > 0) {
+      int64_t num_to_consume = std::min<int64_t>(num_repeats, count);
+      int index = data_decoder_.GetRepeatedValue(num_to_consume);
+      if (UNLIKELY(index < 0 || index >= dict_size)) return false;
+      T val = dict_[index];
+      for (int64_t i = 0; i < num_to_consume; ++i) {
+        *reinterpret_cast<T*>(buf) = val;
+        buf += byte_stride;
+      }
+      count -= num_to_consume;
+      continue;
+    } else {
+      uint32_t num_literals = data_decoder_.NextNumLiterals();
+      if (UNLIKELY(num_literals == 0)) return false;
+      int64_t num_to_consume = std::min<int64_t>(num_literals, count);
+      if (!data_decoder_.GetLiteralValues(num_to_consume, indices)) return false;
+      for (int i = 0; i < num_to_consume; ++i) {
+        int index = indices[i];
+        if (UNLIKELY(index < 0 || index >= dict_size)) return false;
+        *reinterpret_cast<T*>(buf) = dict_[index];
+      }
+      count -= num_to_consume;
+    }
+  }
+  return true;
 }
 
 // Force inlining - GCC does not always inline this into hot loops in Parquet scanner.

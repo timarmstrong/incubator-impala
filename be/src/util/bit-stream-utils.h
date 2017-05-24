@@ -101,7 +101,7 @@ class BitReader {
   /// Does not take ownership of the buffer.
   BitReader(const uint8_t* buffer, int buffer_len) { Reset(buffer, buffer_len); }
 
-  BitReader() : buffer_(NULL), max_bytes_(0) {}
+  BitReader() : buffer_pos_(NULL), buffer_end_(NULL) {}
 
   // The implicit copy constructor is left defined. If a BitReader is copied, the
   // two copies do not share any state. Invoking functions on either copy continues
@@ -111,34 +111,37 @@ class BitReader {
   /// Resets the read to start reading from the start of 'buffer'. The buffer's
   /// length is 'buffer_len'. Does not take ownership of the buffer.
   void Reset(const uint8_t* buffer, int buffer_len) {
-    buffer_ = buffer;
-    max_bytes_ = buffer_len;
-    byte_offset_ = 0;
-    bit_offset_ = 0;
-    int num_bytes = std::min(8, max_bytes_);
-    memcpy(&buffered_values_, buffer_, num_bytes);
+    buffer_pos_ = buffer;
+    buffer_end_ = buffer + buffer_len;
   }
 
-  /// Gets the next value from the buffer.  Returns true if 'v' could be read or false if
-  /// there are not enough bytes left. num_bits must be <= 32.
+  /// Gets up to 'num_values' bit-packed values, starting from the current byte in the
+  /// buffer and advance the read position. 'bit_width' must be <= 32.
+  /// If 'bit_width' * 'num_values' is not a multiple of 8, the trailing bytes are
+  /// skipped and the next GetValueBatch() call will start reading from the next byte.
+  ///
+  /// If the caller does not want to drop trailing bits, 'num_values' must be exactly the
+  /// total number of values the caller wants to read from a run of bit-packed values, or
+  /// 'bit_width' * 'num_values' must be a multiple of 8 (it is sufficient if 'num_values'
+  /// is a multiple of 32.
+  ///
+  /// Returns the number of values read.
   template<typename T>
-  bool GetValue(int num_bits, T* v);
+  int GetValueBatch(int bit_width, int num_values, T* v);
 
-  /// Reads a 'num_bytes'-sized value from the buffer and stores it in 'v'. T needs to be a
-  /// little-endian native type and big enough to store 'num_bytes'. The value is assumed
-  /// to be byte-aligned so the stream will be advanced to the start of the next byte
-  /// before 'v' is read. Returns false if there are not enough bytes left.
+  /// Reads an unpacked 'num_bytes'-sized value from the buffer and stores it in 'v'. T
+  /// needs to be a little-endian native type and big enough to store 'num_bytes'.
+  /// Returns false if there are not enough bytes left.
   template<typename T>
-  bool GetAligned(int num_bytes, T* v);
+  bool GetBytes(int num_bytes, T* v);
 
   /// Reads a vlq encoded int from the stream.  The encoded int must start at the
   /// beginning of a byte. Return false if there were not enough bytes in the buffer or
   /// the int is invalid.
   bool GetVlqInt(int32_t* v);
 
-  /// Returns the number of bytes left in the stream, not including the current byte (i.e.,
-  /// there may be an additional fraction of a byte).
-  int bytes_left() { return max_bytes_ - (byte_offset_ + BitUtil::Ceil(bit_offset_, 8)); }
+  /// Returns the number of bytes left in the stream.
+  int bytes_left() { return buffer_end_ - buffer_pos_; }
 
   /// Maximum byte length of a vlq encoded int
   static const int MAX_VLQ_BYTE_LEN = 5;
@@ -147,15 +150,11 @@ class BitReader {
   static const int MAX_BITWIDTH = 32;
 
  private:
-  const uint8_t* buffer_;
-  int max_bytes_;
+  /// Current read position in the buffer.
+  const uint8_t* buffer_pos_;
 
-  /// Bytes are memcpy'd from buffer_ and values are read from this variable. This is
-  /// faster than reading values byte by byte directly from buffer_.
-  uint64_t buffered_values_;
-
-  int byte_offset_;       // Offset in buffer_
-  int bit_offset_;        // Offset in buffered_values_
+  /// One byte past the end of the buffer.
+  const uint8_t* buffer_end_;
 };
 
 }
