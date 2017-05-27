@@ -214,8 +214,154 @@ bool TimestampParser::ParseFormatTokens(DateTimeFormatContext* dt_ctx) {
   return dt_ctx->has_date_toks || dt_ctx->has_time_toks;
 }
 
+const char* TimestampParser::ParseDigitToken(const char* str, const char* str_end){
+  const char* tok_end = str;
+  while(tok_end < str_end) {
+    if (!isdigit(*tok_end)) return tok_end;
+    ++tok_end;
+  }
+  return tok_end;
+}
+
+const char* TimestampParser::ParseSeparatorToken(const char* str, const char* str_end,
+         const char sep) {
+  const char* tok_end = str;
+  while(tok_end < str_end) {
+    if (*tok_end != sep) return tok_end;
+    ++tok_end;
+  }
+  return tok_end;
+}
+
+bool TimestampParser::ParseFormatTokensByStr(DateTimeFormatContext* dt_ctx){
+  DCHECK(dt_ctx != NULL);
+  DCHECK(dt_ctx->fmt != NULL);
+  DCHECK(dt_ctx->fmt_len > 0);
+  DCHECK(dt_ctx->toks.size() == 0);
+  const char* str_begin = dt_ctx->fmt;
+  const char* str_end = str_begin + dt_ctx->fmt_len;
+  const char* str = str_begin;
+  const char* tok_end;
+
+  // Parse the 4-digit year
+  tok_end = ParseDigitToken(str, str_end);
+  if (tok_end - str == 4) {
+    dt_ctx->toks.push_back(DateTimeFormatToken(YEAR,str - str_begin, tok_end - str,
+	str));
+    str = tok_end;
+
+    // Check for the date separator '-'
+    tok_end = ParseSeparatorToken(str, str_end, '-');
+    if (tok_end - str != 1) return false;
+    dt_ctx->toks.push_back(DateTimeFormatToken(SEPARATOR, str - str_begin, tok_end - str,
+        str));
+    str = tok_end;
+
+    // Parse the 1 or 2 digit month.
+    tok_end = ParseDigitToken(str, str_end);
+    if (tok_end - str != 1 && tok_end - str != 2) return false;
+    dt_ctx->toks.push_back(DateTimeFormatToken(MONTH_IN_YEAR, str - str_begin, tok_end - str,
+         str));
+    str = tok_end;
+
+    // Check for the date separator '-'
+    tok_end = ParseSeparatorToken(str, str_end, '-');
+    if (tok_end - str != 1) return false;
+    dt_ctx->toks.push_back(DateTimeFormatToken(SEPARATOR, str - str_begin, tok_end - str,
+        str));
+    str = tok_end;
+
+    // Parse the 1 or 2 digit day in month
+    tok_end = ParseDigitToken(str, str_end);
+    if (tok_end - str != 1 && tok_end - str != 2) return false;
+    dt_ctx->toks.push_back(DateTimeFormatToken(DAY_IN_MONTH, str - str_begin, tok_end - str,
+         str));
+    str = tok_end;
+    dt_ctx->has_date_toks = true;
+
+    // If the string ends here, we only have a date component
+    if (str == str_end) return dt_ctx->has_date_toks;
+
+    // Check for the space between date and time component
+    tok_end = ParseSeparatorToken(str, str_end, ' ');
+    if (tok_end - str != 1) return false;
+    dt_ctx->toks.push_back(DateTimeFormatToken(SEPARATOR, str - str_begin, tok_end - str,
+        str));
+    str = tok_end;
+
+    // Invalid format if date-time separator is not followed by more digits
+    if (str > str_end) return false;
+    tok_end = ParseDigitToken(str, str_end);
+  }
+
+  // Parse the 1 or 2 digit hour
+  if (tok_end - str != 1 && tok_end - str != 2) return false;
+  dt_ctx->toks.push_back(DateTimeFormatToken(HOUR_IN_DAY, str - str_begin, tok_end - str,
+      str));
+  str = tok_end;
+
+  // Check for the time component separator ':'
+  tok_end = ParseSeparatorToken(str, str_end, ':');
+  if (tok_end - str != 1) return false;
+  dt_ctx->toks.push_back(DateTimeFormatToken(SEPARATOR, str - str_begin, tok_end - str,
+        str));
+  str = tok_end;
+
+  // Parse the 1 or 2 digit minute
+  tok_end = ParseDigitToken(str, str_end);
+  if (tok_end - str != 1 && tok_end - str != 2) return false;
+  dt_ctx->toks.push_back(DateTimeFormatToken(MINUTE_IN_HOUR, str - str_begin, tok_end - str,
+      str));
+  str = tok_end;
+
+  // Check for the time component separator ':'
+  tok_end = ParseSeparatorToken(str, str_end, ':');
+  if (tok_end - str != 1) return false;
+  dt_ctx->toks.push_back(DateTimeFormatToken(SEPARATOR, str - str_begin, tok_end - str,
+      str));
+  str = tok_end;
+
+  // Parse the 1 or 2 digit second
+  tok_end = ParseDigitToken(str, str_end);
+  if (tok_end - str != 1 && tok_end - str != 2) return false;
+  dt_ctx->toks.push_back(DateTimeFormatToken(SECOND_IN_MINUTE, str - str_begin,
+      tok_end - str, str));
+  str = tok_end;
+  dt_ctx->has_time_toks = true;
+
+  // We have more to parse, there maybe a fractional component.
+  if (str < str_end) {
+    tok_end = ParseSeparatorToken(str, str_end, '.');
+    if (tok_end - str != 1) return false;
+    dt_ctx->toks.push_back(DateTimeFormatToken(SEPARATOR, str - str_begin, tok_end - str,
+        str));
+    str = tok_end;
+
+    // Invalid format when there is no factional component following '.'
+    if (str > str_end) return false;
+
+    // Parse the fractional component.
+    // Like the non-lazy path, we will parse up to 9 fractional digits
+    tok_end = ParseDigitToken(str, str_end);
+    if (tok_end - str > 9) {
+      dt_ctx->toks.push_back(DateTimeFormatToken(FRACTION, str - str_begin, 9, str));
+    } else {
+      dt_ctx->toks.push_back(DateTimeFormatToken(FRACTION, str - str_begin,
+          tok_end - str, str));
+    }
+    str = tok_end;
+
+    // Invalid format if there is more to parse after the fractional component
+    if (str < str_end) return false;
+  }
+  return dt_ctx->has_time_toks;
+}
+
 bool TimestampParser::Parse(const char* str, int len, boost::gregorian::date* d,
     boost::posix_time::time_duration* t) {
+  DateTimeFormatContext lazy_ctx;
+  int lazy_len;
+
   DCHECK(TimestampParser::initialized_);
   DCHECK(d != NULL);
   DCHECK(t != NULL);
@@ -248,6 +394,7 @@ bool TimestampParser::Parse(const char* str, int len, boost::gregorian::date* d,
     }
   }
 
+  lazy_len = len;
   // Only process what we have to.
   if (len > DEFAULT_DATE_TIME_FMT_LEN) len = DEFAULT_DATE_TIME_FMT_LEN;
   // Determine the default formatting context that's required for parsing.
@@ -278,7 +425,7 @@ bool TimestampParser::Parse(const char* str, int len, boost::gregorian::date* d,
           // There is likely a fractional component that's below the expected 9 chars.
           // We will need to work out which default context to use that corresponds to
           // the fractional length in the string.
-          if (LIKELY(len > DEFAULT_SHORT_DATE_TIME_FMT_LEN)) {
+          if (LIKELY(len > DEFAULT_SHORT_DATE_TIME_FMT_LEN) && LIKELY(str[19] == '.')) {
             switch (str[10]) {
               case ' ': {
                 dt_ctx =
@@ -295,7 +442,7 @@ bool TimestampParser::Parse(const char* str, int len, boost::gregorian::date* d,
           break;
         }
       }
-    } else if (str[2] == ':') {
+    } else if (str[2] == ':' && str[5] == ':' && isdigit(str[7])) {
       if (len > DEFAULT_TIME_FRAC_FMT_LEN) len = DEFAULT_TIME_FRAC_FMT_LEN;
       if (len > DEFAULT_TIME_FMT_LEN && str[8] == '.') {
         dt_ctx = &DEFAULT_TIME_FRAC_CTX[len - DEFAULT_TIME_FMT_LEN - 1];
@@ -304,6 +451,17 @@ bool TimestampParser::Parse(const char* str, int len, boost::gregorian::date* d,
       }
     }
   }
+
+  // Generating context lazily as a fall back if default formats fail.
+  // ParseFormatTokenByStr() does not require a template format string.
+  if (dt_ctx == NULL) {
+      lazy_ctx.Reset(str, lazy_len);
+      if (ParseFormatTokensByStr(&lazy_ctx)){
+      dt_ctx = &lazy_ctx;
+      len = lazy_len;
+      }
+    }
+
   if (LIKELY(dt_ctx != NULL)) {
     return Parse(str, len, *dt_ctx, d, t);
   } else {

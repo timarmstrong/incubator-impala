@@ -3051,6 +3051,41 @@ TEST_F(ExprTest, CastExprs) {
   TestStringValue("cast(cast(cast('2012-01-01 09:10:11.123456789' as timestamp) as"
       " timestamp) as string)", "2012-01-01 09:10:11.123456789");
 
+  // Test casting of lazy date and/or time format string to timestamp
+  TestTimestampValue("cast('2001-1-2' as timestamp)",
+      TimestampValue::Parse("2001-01-02 00:00:00"));
+  TestTimestampValue("cast('2001-01-3' as timestamp)",
+      TimestampValue::Parse("2001-01-03 00:00:00"));
+  TestTimestampValue("cast('2001-1-21' as timestamp)",
+      TimestampValue::Parse("2001-01-21 00:00:00"));
+  TestTimestampValue("cast('2001-1-21 12:5:30' as timestamp)",
+      TimestampValue::Parse("2001-01-21 12:05:30"));
+  TestTimestampValue("cast('2001-1-21 13:5:05' as timestamp)",
+      TimestampValue::Parse("2001-01-21 13:05:05"));
+  TestTimestampValue("cast('2001-1-21 1:2:3' as timestamp)",
+      TimestampValue::Parse("2001-01-21 01:02:03"));
+  TestTimestampValue("cast('2001-1-21 1:5:31.12345' as timestamp)",
+      TimestampValue::Parse("2001-01-21 01:05:31.123450000"));
+  TestTimestampValue("cast('2001-1-21 1:5:31.12345678910111213' as timestamp)",
+      TimestampValue::Parse("2001-01-21 01:05:31.123456789"));
+  TestTimestampValue("cast('1:05:1.12' as timestamp)",
+      TimestampValue::Parse("01:05:01.120000000"));
+  TestTimestampValue("cast('1:05:1' as timestamp)",
+      TimestampValue::Parse("01:05:01"));
+  TestTimestampValue("cast('        2001-01-9 1:05:1        ' as timestamp)",
+      TimestampValue::Parse("2001-01-09 01:05:01"));
+  TestIsNull("cast('2001-1-21     11:2:3' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('2001-6' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('01-1-21' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('2001-1-21 12:5:3 AM' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1:05:31.123456foo' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('10/feb/10' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-foo1-2bar' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909/1-/2' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-1-2 12:32:1.111bar' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12:32:1.111.111.2' as timestamp)", TYPE_TIMESTAMP);
+
+
   // IMPALA-3163: Test precise conversion from Decimal to Timestamp.
   TestTimestampValue("cast(cast(1457473016.1230 as decimal(17,4)) as timestamp)",
       TimestampValue::Parse("2016-03-08 21:36:56.123000000", 29));
@@ -5978,7 +6013,7 @@ TEST_F(ExprTest, TimestampFunctions) {
   TestIsNull("timestamp_cmp('','1966-05-04 15:33:45')", TYPE_INT);
   TestIsNull("timestamp_cmp(NULL,'1966-05-04 15:33:45')", TYPE_INT);
   // Invalid timestamp test case
-  TestIsNull("timestamp_cmp('1966-5-4 5:33:45','1966-5-4 15:33:45')", TYPE_INT);
+  TestIsNull("timestamp_cmp('1966-5-4 50:33:45','1966-5-4 15:33:45')", TYPE_INT);
 
   TestValue("int_months_between('1967-07-19','1966-06-04')", TYPE_INT, 13);
   TestValue("int_months_between('1966-06-04 16:34:45','1967-07-19 15:33:46')",
