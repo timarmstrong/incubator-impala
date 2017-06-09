@@ -251,6 +251,10 @@ struct TQueryOptions {
   // cardinality, e.g., because of missing table statistics.
   56: optional TJoinDistributionMode default_join_distribution_mode =
     TJoinDistributionMode.BROADCAST
+
+  // If the number of rows per node is below the threshold and disable_codegen is unset,
+  // codegen will be automatically be disabled by the planner.
+  57: optional i32 disable_codegen_rows_threshold = 50000
 }
 
 // Impala currently has two types of sessions: Beeswax and HiveServer2

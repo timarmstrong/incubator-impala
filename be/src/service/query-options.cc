@@ -493,6 +493,10 @@ Status impala::SetQueryOption(const string& key, const string& value,
         }
         break;
       }
+      case TImpalaQueryOptions::DISABLE_CODEGEN_ROWS_THRESHOLD: {
+        query_options->__set_disable_codegen_rows_threshold(atoi(value.c_str()));
+        break;
+      }
       default:
         // We hit this DCHECK(false) if we forgot to add the corresponding entry here
         // when we add a new query option.

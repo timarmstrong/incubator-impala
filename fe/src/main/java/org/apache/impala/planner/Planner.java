@@ -38,7 +38,6 @@ import org.apache.impala.common.PrintUtils;
 import org.apache.impala.common.RuntimeEnv;
 import org.apache.impala.service.BackendConfig;
 import org.apache.impala.thrift.TExplainLevel;
-import org.apache.impala.thrift.TPartitionType;
 import org.apache.impala.thrift.TQueryCtx;
 import org.apache.impala.thrift.TQueryExecRequest;
 import org.apache.impala.thrift.TQueryOptions;
@@ -91,24 +90,7 @@ public class Planner {
     ctx_.getAnalysisResult().getTimeline().markEvent("Single node plan created");
     ArrayList<PlanFragment> fragments = null;
 
-    // Determine the maximum number of rows processed by any node in the plan tree
-    MaxRowsProcessedVisitor visitor = new MaxRowsProcessedVisitor();
-    singleNodePlan.accept(visitor);
-    long maxRowsProcessed = visitor.get() == -1 ? Long.MAX_VALUE : visitor.get();
-    boolean isSmallQuery =
-        maxRowsProcessed < ctx_.getQueryOptions().exec_single_node_rows_threshold;
-    if (isSmallQuery) {
-      // Execute on a single node and disable codegen for small results
-      ctx_.getQueryOptions().setNum_nodes(1);
-      ctx_.getQueryCtx().disable_codegen_hint = true;
-      if (maxRowsProcessed < ctx_.getQueryOptions().batch_size ||
-          maxRowsProcessed < 1024 && ctx_.getQueryOptions().batch_size == 0) {
-        // Only one scanner thread for small queries
-        ctx_.getQueryOptions().setNum_scanner_threads(1);
-      }
-      // disable runtime filters
-      ctx_.getQueryOptions().setRuntime_filter_mode(TRuntimeFilterMode.OFF);
-    }
+    checkForSmallQueryOptimization(singleNodePlan);
 
     // Join rewrites.
     invertJoins(singleNodePlan, ctx_.isSingleNodeExec());
@@ -166,6 +148,8 @@ public class Planner {
       resultExprs = queryStmt.getResultExprs();
     }
     rootFragment.setOutputExprs(resultExprs);
+
+    checkForDisableCodegen(rootFragment.getPlanRoot());
 
     if (LOG.isTraceEnabled()) {
       LOG.trace("desctbl: " + ctx_.getRootAnalyzer().getDescTbl().debugString());
@@ -480,6 +464,40 @@ public class Planner {
     newJoinNode.setId(joinNode.getId());
     newJoinNode.init(analyzer);
     return newJoinNode;
+  }
+
+  private void checkForSmallQueryOptimization(PlanNode singleNodePlan) {
+    // Determine the maximum number of rows processed by any node in the plan tree
+    MaxRowsProcessedVisitor visitor = new MaxRowsProcessedVisitor();
+    singleNodePlan.accept(visitor);
+    // TODO: IMPALA-3335: support the optimization for plans with joins.
+    if (!visitor.valid() || visitor.foundJoinNode()) return;
+    long maxRowsProcessed = visitor.getMaxRowsProcessed();
+    boolean isSmallQuery = visitor.valid()
+        && visitor.getMaxRowsProcessed() < ctx_.getQueryOptions().exec_single_node_rows_threshold;
+    if (isSmallQuery) {
+      // Execute on a single node and disable codegen for small results
+      ctx_.getQueryOptions().setNum_nodes(1);
+      ctx_.getQueryCtx().disable_codegen_hint = true;
+      if (maxRowsProcessed < ctx_.getQueryOptions().batch_size ||
+          maxRowsProcessed < 1024 && ctx_.getQueryOptions().batch_size == 0) {
+        // Only one scanner thread for small queries
+        ctx_.getQueryOptions().setNum_scanner_threads(1);
+      }
+      // disable runtime filters
+      ctx_.getQueryOptions().setRuntime_filter_mode(TRuntimeFilterMode.OFF);
+    }
+  }
+
+  private void checkForDisableCodegen(PlanNode planRoot) {
+    // Determine the maximum number of rows processed by a instance of a plan node.
+    MaxRowsProcessedVisitor visitor = new MaxRowsProcessedVisitor();
+    planRoot.accept(visitor);
+    if (!visitor.valid()) return;
+    if (visitor.getMaxRowsProcessedPerNode()
+        < ctx_.getQueryOptions().getDisable_codegen_rows_threshold()) {
+      ctx_.getQueryCtx().disable_codegen_hint = true;
+    }
   }
 
   /**
