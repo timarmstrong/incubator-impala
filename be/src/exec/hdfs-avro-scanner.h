@@ -201,9 +201,10 @@ class HdfsAvroScanner : public BaseSequenceScanner {
 
   /// Materializes a single tuple from serialized record data. Will return false and set
   /// error in parse_status_ if memory limit is exceeded when allocating new char buffer.
-  /// See comments below for ReadAvroChar().
+  /// See comments below for ReadAvroChar(). If 'copy_out' is true, all var-len data
+  /// referenced by slots must be copied out of '*data'.
   bool MaterializeTuple(const AvroSchemaElement& record_schema, MemPool* pool,
-      uint8_t** data, uint8_t* data_end, Tuple* tuple);
+      uint8_t** data, uint8_t* data_end, bool copy_out, Tuple* tuple);
 
   /// Produces a version of DecodeAvroData that uses codegen'd instead of interpreted
   /// functions. Stores the resulting function in 'decode_avro_data_fn' if codegen was
@@ -233,20 +234,20 @@ class HdfsAvroScanner : public BaseSequenceScanner {
   ///     the bail_out block or some basic blocks before that.
   /// - bail_out: the block to jump to if anything fails. This is used in particular by
   ///     ReadAvroChar() which can exceed memory limit during allocation from MemPool.
-  /// - this_val, pool_val, tuple_val, data_val, data_end_val: arguments to
+  /// - this_val, pool_val, copy_out_val, tuple_val, data_val, data_end_val: arguments to
   ///     MaterializeTuple()
   static Status CodegenReadRecord(
       const SchemaPath& path, const AvroSchemaElement& record, HdfsScanNodeBase* node,
       LlvmCodeGen* codegen, void* builder, llvm::Function* fn,
       llvm::BasicBlock* insert_before, llvm::BasicBlock* bail_out, llvm::Value* this_val,
-      llvm::Value* pool_val, llvm::Value* tuple_val, llvm::Value* data_val,
-      llvm::Value* data_end_val) WARN_UNUSED_RESULT;
+      llvm::Value* pool_val, llvm::Value* copy_out_val, llvm::Value* tuple_val,
+      llvm::Value* data_val, llvm::Value* data_end_val) WARN_UNUSED_RESULT;
 
   /// Creates the IR for reading an Avro scalar at builder's current insert point.
   static Status CodegenReadScalar(const AvroSchemaElement& element,
       SlotDescriptor* slot_desc, LlvmCodeGen* codegen, void* void_builder,
-      llvm::Value* this_val, llvm::Value* pool_val, llvm::Value* tuple_val,
-      llvm::Value* data_val, llvm::Value* data_end_val, llvm::Value** ret_val)
+      llvm::Value* this_val, llvm::Value* pool_val, llvm::Value* copy_out_val,
+      llvm::Value* tuple_val, llvm::Value* data_val, llvm::Value* data_end_val, llvm::Value** ret_val)
       WARN_UNUSED_RESULT;
 
   /// The following are cross-compiled functions for parsing a serialized Avro primitive
@@ -255,6 +256,8 @@ class HdfsAvroScanner : public BaseSequenceScanner {
   /// - data: Serialized record data. Is advanced past the read field.
   /// - data_end: pointer to the end of the data buffer (i.e. the first invalid byte).
   /// The following arguments are used only if 'write_slot' is true:
+  /// - copy_out: If true, must copy out any var-len data in '*data' referenced by slot
+  //              to 'pool'.
   /// - slot: The tuple slot to write the parsed field into.
   /// - type: The type of the slot. (This is necessary because there is not a 1:1 mapping
   ///         between Avro types and Impala's primitive types.)
@@ -264,21 +267,21 @@ class HdfsAvroScanner : public BaseSequenceScanner {
   /// allocating buffer, malformed data), and return true otherwise.
   ///
   bool ReadAvroBoolean(PrimitiveType type, uint8_t** data, uint8_t* data_end,
-      bool write_slot, void* slot, MemPool* pool);
+      bool write_slot, bool copy_out, void* slot, MemPool* pool);
   bool ReadAvroInt32(PrimitiveType type, uint8_t** data, uint8_t* data_end,
-      bool write_slot, void* slot, MemPool* pool);
+      bool write_slot, bool copy_out, void* slot, MemPool* pool);
   bool ReadAvroInt64(PrimitiveType type, uint8_t** data, uint8_t* data_end,
-      bool write_slot, void* slot, MemPool* pool);
+      bool write_slot, bool copy_out, void* slot, MemPool* pool);
   bool ReadAvroFloat(PrimitiveType type, uint8_t** data, uint8_t* data_end,
-      bool write_slot, void* slot, MemPool* pool);
+      bool write_slot, bool copy_out, void* slot, MemPool* pool);
   bool ReadAvroDouble(PrimitiveType type, uint8_t** data, uint8_t* data_end,
-      bool write_slot, void* slot, MemPool* pool);
+      bool write_slot, bool copy_out, void* slot, MemPool* pool);
   bool ReadAvroVarchar(PrimitiveType type, int max_len, uint8_t** data, uint8_t* data_end,
-      bool write_slot, void* slot, MemPool* pool);
+      bool write_slot, bool copy_out, void* slot, MemPool* pool);
   bool ReadAvroChar(PrimitiveType type, int max_len, uint8_t** data, uint8_t* data_end,
-      bool write_slot, void* slot, MemPool* pool);
+      bool write_slot, bool copy_out, void* slot, MemPool* pool);
   bool ReadAvroString(PrimitiveType type, uint8_t** data, uint8_t* data_end,
-      bool write_slot, void* slot, MemPool* pool);
+      bool write_slot, bool copy_out, void* slot, MemPool* pool);
 
   /// Helper function for some of the above. Returns the the length of certain varlen
   /// types and updates 'data'. If an error is encountered returns a non-ok result and
@@ -290,9 +293,8 @@ class HdfsAvroScanner : public BaseSequenceScanner {
   /// explicitly, rather than passing a ColumnType, so we can easily pass in a constant in
   /// the codegen'd MaterializeTuple() function. If 'write_slot' is false, 'slot_byte_size'
   /// is ignored.
-  bool ReadAvroDecimal(
-      int slot_byte_size, uint8_t** data, uint8_t* data_end, bool write_slot, void* slot,
-      MemPool* pool);
+  bool ReadAvroDecimal(int slot_byte_size, uint8_t** data, uint8_t* data_end,
+      bool write_slot, bool copy_out, void* slot, MemPool* pool);
 
   /// Reads and advances 'data' past the union branch index and sets 'is_null' according
   /// to if the corresponding element is null. 'null_union_position' must be 0 or
