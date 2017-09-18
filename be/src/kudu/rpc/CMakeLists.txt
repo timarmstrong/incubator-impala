@@ -86,6 +86,9 @@ ADD_EXPORTABLE_LIBRARY(krpc
   SRCS ${KRPC_SRCS}
   DEPS ${KRPC_LIBS})
 
+# Work around misleading indentation warning from protoc-generated C++.
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-misleading-indentation")
+
 ### RPC generator tool
 add_executable(protoc-gen-krpc protoc-gen-krpc.cc
   # Impala - add stub for kudu::VersionInfo

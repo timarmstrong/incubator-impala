@@ -513,9 +513,8 @@ string FragmentInstanceState::ExecStateToString(const TFInstanceExecState::type 
       "Finished"                  // FINISHED
   };
   /// Make sure we have a label for every possible state.
-  static_assert(
-      sizeof(finstance_state_labels) / sizeof(char*) == TFInstanceExecState::FINISHED + 1,
-      "");
+  static_assert(sizeof(finstance_state_labels) / sizeof(finstance_state_labels[0])
+      == TFInstanceExecState::FINISHED + 1, "");
 
   DCHECK_LT(state, sizeof(finstance_state_labels) / sizeof(char*))
       << "Unknown instance state";

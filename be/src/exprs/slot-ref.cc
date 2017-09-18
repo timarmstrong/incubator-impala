@@ -462,13 +462,21 @@ DecimalVal SlotRef::GetDecimalVal(
   DCHECK_EQ(type_.type, TYPE_DECIMAL);
   Tuple* t = row->GetTuple(tuple_idx_);
   if (t == NULL || t->IsNull(null_indicator_offset_)) return DecimalVal::null();
+  DecimalVal result;
+  result.is_null = false;
+  void* slot = t->GetSlot(slot_offset_);
+  // Use memcpy() since the slot is not aligned. For 16-byte values in particular, GCC
+  // can emit instructions that assume 16-byte alignment.
   switch (type_.GetByteSize()) {
     case 4:
-      return DecimalVal(*reinterpret_cast<int32_t*>(t->GetSlot(slot_offset_)));
+      memcpy(&result.val4, slot, 4);
+      return result;
     case 8:
-      return DecimalVal(*reinterpret_cast<int64_t*>(t->GetSlot(slot_offset_)));
+      memcpy(&result.val8, slot, 8);
+      return result;
     case 16:
-      return DecimalVal(*reinterpret_cast<int128_t*>(t->GetSlot(slot_offset_)));
+      memcpy(&result.val16, slot, 16);
+      return result;
     default:
       DCHECK(false);
       return DecimalVal::null();

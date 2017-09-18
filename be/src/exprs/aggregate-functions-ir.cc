@@ -265,7 +265,9 @@ void AggregateFunctions::CountMerge(FunctionContext*, const BigIntVal& src,
   dst->val += src.val;
 }
 
-struct AvgState {
+// Mark as packed because the runtime does not guarantee that intermediate values are
+// aligned.
+struct __attribute__((packed)) AvgState {
   double sum;
   int64_t count;
 };
@@ -1693,7 +1695,10 @@ BigIntVal AggregateFunctions::SampledNdvFinalize(FunctionContext* ctx,
 // An implementation of a simple single pass variance algorithm. A standard UDA must
 // be single pass (i.e. does not scan the table more than once), so the most canonical
 // two pass approach is not practical.
-struct KnuthVarianceState {
+//
+// Mark as packed because the runtime does not guarantee that intermediate values are
+// aligned.
+struct  __attribute__((packed)) KnuthVarianceState {
   double mean;
   double m2;
   int64_t count;
@@ -1785,7 +1790,9 @@ DoubleVal AggregateFunctions::KnuthStddevPopFinalize(FunctionContext* ctx,
   return sqrt(ComputeKnuthVariance(*state, true));
 }
 
-struct RankState {
+// Mark as packed because the runtime does not guarantee that intermediate values are
+// aligned.
+struct __attribute__((packed)) RankState {
   int64_t rank;
   int64_t count;
   RankState() : rank(1), count(0) { }
@@ -1870,11 +1877,40 @@ inline int GetWindowSize(FunctionContext* ctx) {
 // and we therefore need to return null. To handle this, we track the number of nulls
 // currently in the window, and set the value to be returned to null if the number of
 // nulls is the same as the window size.
+// Mark as packed because we do not align the memory used for intermediate values.
 template <typename T>
-struct LastValIgnoreNullsState {
-  T last_val;
+struct __attribute__((packed)) LastValIgnoreNullsState {
+  // Memory buffer to hold unaligned T value.
+  uint8_t last_val_buf[sizeof(T)];
   // Number of nulls currently in the window, to detect when the window only has nulls.
   int64_t num_nulls;
+
+  /// Load the value using memcpy() to avoid issues accessing unaligned memory directly.
+  T last_val() const {
+    T val;
+    memcpy(&val, last_val_buf, sizeof(T));
+    return val;
+  }
+
+  /// store the value using memcpy() to avoid issues accessing unaligned memory directly.
+  void set_last_val(const T& val) {
+    memcpy(last_val_buf, &val, sizeof(T));
+  }
+
+  /// Set current value based on 'src'. Handles allocating or freeing memory if needed
+  /// for the type.
+  void SetVal(FunctionContext* ctx, const T& src) {
+    T tmp_val = last_val();
+    AggregateFunctions::UpdateVal(ctx, src, &tmp_val);
+    set_last_val(tmp_val);
+  }
+
+  /// Update current value based on 'src' being removed.
+  void Remove(FunctionContext* ctx, const T& src) {
+    T tmp_val = last_val();
+    AggregateFunctions::LastValRemove(ctx, src, &tmp_val);
+    set_last_val(tmp_val);
+  }
 };
 
 template <typename T>
@@ -1882,7 +1918,7 @@ void AggregateFunctions::LastValIgnoreNullsInit(FunctionContext* ctx, StringVal*
   AllocBuffer(ctx, dst, sizeof(LastValIgnoreNullsState<T>));
   LastValIgnoreNullsState<T>* state =
       reinterpret_cast<LastValIgnoreNullsState<T>*>(dst->ptr);
-  state->last_val = T::null();
+  state->set_last_val(T::null());
   state->num_nulls = 0;
 }
 
@@ -1895,14 +1931,14 @@ void AggregateFunctions::LastValIgnoreNullsUpdate(FunctionContext* ctx, const T&
       reinterpret_cast<LastValIgnoreNullsState<T>*>(dst->ptr);
 
   if (!src.is_null) {
-    UpdateVal(ctx, src, &state->last_val);
+    state->SetVal(ctx, src);
   } else {
     ++state->num_nulls;
     DCHECK_LE(state->num_nulls, GetWindowSize(ctx));
     if (GetWindowSize(ctx) == state->num_nulls) {
-      // Call UpdateVal here to set the value to null because it handles deallocation
+      // Call SetVal() here to set the value to null because it handles deallocation
       // of StringVals correctly.
-      UpdateVal(ctx, T::null(), &state->last_val);
+      state->SetVal(ctx, T::null());
     }
   }
 }
@@ -1914,14 +1950,14 @@ void AggregateFunctions::LastValIgnoreNullsRemove(FunctionContext* ctx, const T&
   DCHECK_EQ(sizeof(LastValIgnoreNullsState<T>), dst->len);
   LastValIgnoreNullsState<T>* state =
       reinterpret_cast<LastValIgnoreNullsState<T>*>(dst->ptr);
-  LastValRemove(ctx, src, &state->last_val);
+  state->Remove(ctx, src);
 
   if (src.is_null) --state->num_nulls;
   DCHECK_GE(state->num_nulls, 0);
   if (GetWindowSize(ctx) == state->num_nulls) {
-    // Call UpdateVal here to set the value to null because it handles deallocation
+    // Call SetVal() here to set the value to null because it handles deallocation
     // of StringVals correctly.
-    UpdateVal(ctx, T::null(), &state->last_val);
+    state->SetVal(ctx, T::null());
   }
 }
 
@@ -1932,7 +1968,7 @@ T AggregateFunctions::LastValIgnoreNullsGetValue(FunctionContext* ctx,
   DCHECK_EQ(sizeof(LastValIgnoreNullsState<T>), src.len);
   LastValIgnoreNullsState<T>* state =
       reinterpret_cast<LastValIgnoreNullsState<T>*>(src.ptr);
-  return state->last_val;
+  return state->last_val();
 }
 
 template <>
@@ -1943,10 +1979,11 @@ StringVal AggregateFunctions::LastValIgnoreNullsGetValue(FunctionContext* ctx,
   LastValIgnoreNullsState<StringVal>* state =
       reinterpret_cast<LastValIgnoreNullsState<StringVal>*>(src.ptr);
 
-  if (state->last_val.is_null) {
+  StringVal last_val = state->last_val();
+  if (last_val.is_null) {
     return StringVal::null();
   } else {
-    return StringVal::CopyFrom(ctx, state->last_val.ptr, state->last_val.len);
+    return StringVal::CopyFrom(ctx, last_val.ptr, last_val.len);
   }
 }
 
@@ -1966,7 +2003,8 @@ StringVal AggregateFunctions::LastValIgnoreNullsFinalize(FunctionContext* ctx,
   LastValIgnoreNullsState<StringVal>* state =
       reinterpret_cast<LastValIgnoreNullsState<StringVal>*>(src.ptr);
   StringVal result = LastValIgnoreNullsGetValue<StringVal>(ctx, src);
-  if (!state->last_val.is_null) ctx->Free(state->last_val.ptr);
+  StringVal last_val = state->last_val();
+  if (!last_val.is_null) ctx->Free(last_val.ptr);
   ctx->Free(src.ptr);
   return result;
 }

@@ -426,13 +426,14 @@ if __name__ == "__main__":
 
   # LLVM and Kudu are the largest packages. Sort them first so that
   # their download starts as soon as possible.
-  packages = map(Package, ["llvm", "kudu",
-      "avro", "binutils", "boost", "breakpad", "bzip2", "cmake", "crcutil",
-      "flatbuffers", "gcc", "gflags", "glog", "gperftools", "gtest", "libev",
-      "lz4", "openldap", "openssl", "protobuf",
-      "rapidjson", "re2", "snappy", "thrift", "tpc-h", "tpc-ds", "zlib"])
-  packages.insert(0, Package("llvm", "5.0.1-asserts"))
-  bootstrap(toolchain_root, packages)
+  if os.getenv("DOWNLOAD_IMPALA_TOOLCHAIN", "true") == "true":
+    packages = map(Package, ["llvm", "kudu",
+        "avro", "binutils", "boost", "breakpad", "bzip2", "cmake", "crcutil",
+        "flatbuffers", "gcc", "gflags", "glog", "gperftools", "gtest", "libev",
+        "lz4", "openldap", "openssl", "protobuf",
+        "rapidjson", "re2", "snappy", "thrift", "tpc-h", "tpc-ds", "zlib"])
+    packages.insert(0, Package("llvm", "5.0.1-asserts"))
+    bootstrap(toolchain_root, packages)
 
   # Download the CDH components if necessary.
   if os.getenv("DOWNLOAD_CDH_COMPONENTS", "false") == "true":

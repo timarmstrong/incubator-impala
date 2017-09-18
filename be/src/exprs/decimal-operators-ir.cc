@@ -580,7 +580,8 @@ IR_ALWAYS_INLINE DecimalVal DecimalOperators::CastToDecimalVal(
     return DecimalVal::null();
   }
 
-  DCHECK(result == StringParser::PARSE_SUCCESS || StringParser::PARSE_UNDERFLOW);
+  DCHECK(result == StringParser::PARSE_SUCCESS
+      || result == StringParser::PARSE_UNDERFLOW);
   return dv;
 }
 

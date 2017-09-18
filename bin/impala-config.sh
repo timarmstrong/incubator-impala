@@ -73,11 +73,14 @@ fi
 # compile option is changed. The build id can be found in the output of the toolchain
 # build jobs, it is constructed from the build number and toolchain git hash prefix.
 export IMPALA_TOOLCHAIN_BUILD_ID=88-8e37339d45
+# true if we should try to download prebuilt toolchain binaries, false if a custom
+# toolchain build is present in $IMPALA_TOOLCHAIN.
+export DOWNLOAD_IMPALA_TOOLCHAIN=true
 # Versions of toolchain dependencies.
 # -----------------------------------
 export IMPALA_AVRO_VERSION=1.7.4-p4
 unset IMPALA_AVRO_URL
-export IMPALA_BINUTILS_VERSION=2.26.1
+export IMPALA_BINUTILS_VERSION=2.28
 unset IMPALA_BINUTILS_URL
 export IMPALA_BOOST_VERSION=1.57.0-p3
 unset IMPALA_BOOST_URL
@@ -93,7 +96,7 @@ export IMPALA_CYRUS_SASL_VERSION=2.1.23
 unset IMPALA_CYRUS_SASL_URL
 export IMPALA_FLATBUFFERS_VERSION=1.6.0
 unset IMPALA_FLATBUFFERS_URL
-export IMPALA_GCC_VERSION=4.9.2
+export IMPALA_GCC_VERSION=7.1.0
 unset IMPALA_GCC_URL
 export IMPALA_GFLAGS_VERSION=2.2.0-p1
 unset IMPALA_GFLAGS_URL

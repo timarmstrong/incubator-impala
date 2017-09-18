@@ -26,13 +26,13 @@ The rest of the setup is done for you; here is a short description of what they 
 # Usage
 
 ### First time
-1. Symlink /opt/Impala-Toolchain to a directory writable by your user and point
+1. Symlink /opt/Impala-Toolchain-gcc7 to a directory writable by your user and point
   IMPALA_TOOLCHAIN at that directory. This ensures toolchain binaries are at the
   same path locally as on the distcc servers
 
         mkdir -p "$IMPALA_TOOLCHAIN"/toolchain
-        sudo ln -s "$IMPALA_TOOLCHAIN"/toolchain /opt/Impala-Toolchain
-        echo 'export IMPALA_TOOLCHAIN=/opt/Impala-Toolchain' >> bin/impala-config-local.sh
+        sudo ln -s "$IMPALA_TOOLCHAIN"/toolchain /opt/Impala-Toolchain-gcc7
+        echo 'export IMPALA_TOOLCHAIN=/opt/Impala-Toolchain-gcc7' >> bin/impala-config-local.sh
 
 1. Source bin/impala-config.sh in the Impala repo. Step #2 depends on this.
 
@@ -96,7 +96,7 @@ source "$IMPALA_HOME"/bin/distcc/distcc_env.sh
 1. Start distcc.
 1. Edit distcc_env.sh to include the new host.
 1. Install all required gcc, clang, binutils, etc, versions from the toolchain into
-   /opt/Impala-Toolchain.
+   /opt/Impala-Toolchain-gcc7.
 1. ccache stores its cache in $HOME/.ccache. Assuming distcc is running as a non-root user
    that has no $HOME, you must sudo mkdir /.ccache, then sudo chmod 777 /.ccache.
 1. If distcc runs as "nobody", sudo -u nobody ccache -M 25G. This sets the size of the

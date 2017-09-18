@@ -19,6 +19,8 @@
 
 #include <algorithm>
 #include <exception>
+#include <sstream>
+
 #include <boost/algorithm/string/join.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/filesystem.hpp>
@@ -1329,8 +1331,9 @@ Status ImpalaServer::AuthorizeProxyUser(const string& user, const string& do_as_
             << do_as_user << "'.";
   if (authorized_proxy_user_config_.size() == 0) {
     error_msg << " User delegation is disabled.";
-    VLOG(1) << error_msg;
-    return Status::Expected(error_msg.str());
+    string error_str = error_msg.str();
+    VLOG(1) << error_str;
+    return Status::Expected(error_str);
   }
 
   // Get the short version of the user name (the user name up to the first '/' or '@')
@@ -1350,8 +1353,9 @@ Status ImpalaServer::AuthorizeProxyUser(const string& user, const string& do_as_
       if (user == "*" || user == do_as_user) return Status::OK();
     }
   }
-  VLOG(1) << error_msg;
-  return Status::Expected(error_msg.str());
+  string error_msg_str = error_msg.str();
+  VLOG(1) << error_msg_str;
+  return Status::Expected(error_msg_str);
 }
 
 void ImpalaServer::CatalogUpdateVersionInfo::UpdateCatalogVersionMetrics()

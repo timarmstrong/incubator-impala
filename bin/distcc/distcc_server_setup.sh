@@ -109,5 +109,6 @@ EOF
 fi
 service ${DISTCCD_SERVICE} restart
 
-echo "Symlinking /opt/Impala-Toolchain to default toolchain location"
-ln -f -s -T "${IMPALA_HOME}/toolchain" /opt/Impala-Toolchain
+IMPALA_TOOLCHAIN=/opt/Impala-Toolchain-gcc7
+echo "Symlinking $IMPALA_TOOLCHAIN to default toolchain location"
+ln -f -s -T "${IMPALA_HOME}/toolchain" "$IMPALA_TOOLCHAIN"

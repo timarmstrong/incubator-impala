@@ -176,6 +176,7 @@ class ParquetPlainEncoder {
             parquet::Type::FIXED_LEN_BYTE_ARRAY>(buffer, buffer_end, fixed_len_size, v);
       default:
         DCHECK(false) << "Unexpected physical type";
+        return -1;
     }
   }
 

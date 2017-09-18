@@ -740,6 +740,7 @@ const char* Statestore::GetUpdateKindName(UpdateKind kind) {
       return "heartbeat";
   }
   DCHECK(false);
+  return "";
 }
 
 ThreadPool<Statestore::ScheduledSubscriberUpdate>* Statestore::GetThreadPool(
@@ -753,6 +754,7 @@ ThreadPool<Statestore::ScheduledSubscriberUpdate>* Statestore::GetThreadPool(
       return &subscriber_heartbeat_threadpool_;
   }
   DCHECK(false);
+  return nullptr;
 }
 
 Status Statestore::SendHeartbeat(Subscriber* subscriber) {

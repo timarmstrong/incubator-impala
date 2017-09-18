@@ -35,7 +35,7 @@ if [[ -z "$DISTCC_HOSTS" || -z "$CXX_COMPILER" ]]; then
   exit 1
 fi
 
-REMOTE_TOOLCHAIN_DIR=/opt/Impala-Toolchain
+REMOTE_TOOLCHAIN_DIR=/opt/Impala-Toolchain-gcc7.1
 
 if $IMPALA_DISTCC_LOCAL; then
   if [[ "$CXX_COMPILER" == "$IMPALA_TOOLCHAIN"* ]]; then

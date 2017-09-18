@@ -259,27 +259,29 @@ bool HdfsAvroScanner::ReadAvroDecimal(int slot_byte_size, uint8_t** data,
     }
     // Decimals are encoded as big-endian integers. Copy the decimal into the most
     // significant bytes and then shift down to the correct position to sign-extend the
-    // decimal.
+    // decimal. Use memcpy() since the output slot may not be aligned. For 16-byte
+    // values in particular, GCC can emit instructions that assume 16-byte alignment.
     int bytes_to_fill = slot_byte_size - len.val;
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-    BitUtil::ByteSwap(reinterpret_cast<uint8_t*>(slot) + bytes_to_fill, *data, len.val);
-#else
-    memcpy(slot, *data, len.val);
-#endif
     switch (slot_byte_size) {
       case 4: {
-        int32_t* decimal = reinterpret_cast<int32_t*>(slot);
-        *decimal >>= bytes_to_fill * 8;
+        int32_t decimal;
+        BitUtil::ByteSwap(&decimal + bytes_to_fill, *data, len.val);
+        decimal >>= bytes_to_fill * 8;
+        memcpy(slot, &decimal, 4);
         break;
       }
       case 8: {
-        int64_t* decimal = reinterpret_cast<int64_t*>(slot);
-        *decimal >>= bytes_to_fill * 8;
+        int64_t decimal;
+        BitUtil::ByteSwap(&decimal + bytes_to_fill, *data, len.val);
+        decimal >>= bytes_to_fill * 8;
+        memcpy(slot, &decimal, 8);
         break;
       }
       case 16: {
-        int128_t* decimal = reinterpret_cast<int128_t*>(slot);
-        *decimal >>= bytes_to_fill * 8;
+        int128_t decimal;
+        BitUtil::ByteSwap(&decimal + bytes_to_fill, *data, len.val);
+        decimal >>= bytes_to_fill * 8;
+        memcpy(slot, &decimal, 16);
         break;
       }
       default:
