@@ -23,6 +23,13 @@ using namespace impala_udf;
 #define NO_INLINE __attribute__((noinline))
 #define WEAK_SYM  __attribute__((weak))
 
+namespace impala {
+class AggregateFunctions {
+  static constexpr int HLL_PRECISION = 10;
+};
+constexpr int AggregateFunctions::HLL_PRECISION;
+}
+
 // These functions are intended to test the "glue" that runs UDFs. Thus, the UDFs
 // themselves are kept very simple.
 
