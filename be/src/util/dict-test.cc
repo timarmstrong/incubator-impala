@@ -188,6 +188,37 @@ TEST(DictTest, TestStringBufferOverrun) {
   ASSERT_FALSE(decoder.Reset(buffer, sizeof(buffer), 0));
 }
 
+// Make sure that SetData() clears any buffered literals.
+TEST(DictTest, SetDataAfterPartialRead) {
+  MemTracker tracker;
+  MemPool pool(&tracker);
+  DictEncoder<int> encoder(&pool, sizeof(int));
+
+  // Literal run followed by a repeated run.
+  vector<int> values{1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9};
+  for (int val: values) encoder.Put(val);
+
+  vector<uint8_t> dict_buffer(encoder.dict_encoded_size());
+  encoder.WriteDict(dict_buffer.data());
+  vector<uint8_t> data_buffer(encoder.EstimatedDataEncodedSize() * 2);
+  int data_len = encoder.WriteData(data_buffer.data(), data_buffer.size());
+  ASSERT_GT(data_len, 0);
+  encoder.ClearIndices();
+
+  DictDecoder<int> decoder;
+  decoder.Reset(dict_buffer.data(), dict_buffer.size(), sizeof(int));
+
+  // Test decoding some of the values, then resetting. If the decoder incorrectly
+  // caches some values, this could produce incorrectresults.
+  for (int num_to_decode = 0; num_to_decode < values.size(); ++num_to_decode) {
+    ASSERT_OK(decoder.SetData(data_buffer.data(), data_buffer.size()));
+    for (int i = 0; i < num_to_decode; ++i) {
+      int val;
+      ASSERT_TRUE(decoder.GetNextValue(&val));
+      EXPECT_EQ(values[i], val) << num_to_decode << " " << i;
+    }
+  }
+}
 }
 
 IMPALA_TEST_MAIN();
