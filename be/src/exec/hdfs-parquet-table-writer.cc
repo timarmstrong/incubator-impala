@@ -104,8 +104,8 @@ class HdfsParquetTableWriter::BaseColumnWriter {
       page_stats_base_(nullptr),
       row_group_stats_base_(nullptr) {
     def_levels_ = parent_->state_->obj_pool()->Add(
-        new RleEncoder(parent_->reusable_col_mem_pool_->Allocate(DEFAULT_DATA_PAGE_SIZE),
-                       DEFAULT_DATA_PAGE_SIZE, 1));
+        new BitWriter(parent_->reusable_col_mem_pool_->Allocate(DEFAULT_DATA_PAGE_SIZE),
+                       DEFAULT_DATA_PAGE_SIZE));
     values_buffer_ = parent_->reusable_col_mem_pool_->Allocate(values_buffer_len_);
   }
 
@@ -168,7 +168,7 @@ class HdfsParquetTableWriter::BaseColumnWriter {
     dict_encoding_stats_.clear();
     data_encoding_stats_.clear();
     // Repetition/definition level encodings are constant. Incorporate them here.
-    column_encodings_.insert(Encoding::RLE);
+    column_encodings_.insert(Encoding::BIT_PACKED);
   }
 
   // Close this writer. This is only called after Flush() and no more rows will
@@ -281,7 +281,7 @@ class HdfsParquetTableWriter::BaseColumnWriter {
   // Rle encoder object for storing definition levels, owned by instances of this class.
   // For non-nested schemas, this always uses 1 bit per row. This is reused across pages
   // since the underlying buffer is copied out when the page is finalized.
-  RleEncoder* def_levels_;
+  BitWriter* def_levels_;
 
   // Data for buffered values. This is owned by instances of this class and gets reused
   // across pages.
@@ -471,7 +471,7 @@ inline Status HdfsParquetTableWriter::BaseColumnWriter::AppendRow(TupleRow* row)
 
   // Ensure that we have enough space for the definition level, but don't write it yet in
   // case we don't have enough space for the value.
-  if (def_levels_->buffer_full()) {
+  if (def_levels_->bytes_written() == def_levels_->buffer_len()) {
     RETURN_IF_ERROR(FinalizeCurrentPage());
     NewPage();
   }
@@ -517,7 +517,7 @@ inline Status HdfsParquetTableWriter::BaseColumnWriter::AppendRow(TupleRow* row)
   }
 
   // Now that the value has been successfully written, write the definition level.
-  bool ret = def_levels_->Put(value != nullptr);
+  bool ret = def_levels_->PutValue(value != nullptr, 1);
   // Writing the def level will succeed because we ensured there was enough space for it
   // above, and new pages will always have space for at least a single def level.
   DCHECK(ret);
@@ -651,7 +651,7 @@ Status HdfsParquetTableWriter::BaseColumnWriter::FinalizeCurrentPage() {
 
   // Compute size of definition bits
   def_levels_->Flush();
-  current_page_->num_def_bytes = sizeof(int32_t) + def_levels_->len();
+  current_page_->num_def_bytes = def_levels_->bytes_written();
   header.uncompressed_page_size += current_page_->num_def_bytes;
 
   // At this point we know all the data for the data page.  Combine them into one buffer.
@@ -669,9 +669,8 @@ Status HdfsParquetTableWriter::BaseColumnWriter::FinalizeCurrentPage() {
   BufferBuilder buffer(uncompressed_data, header.uncompressed_page_size);
 
   // Copy the definition (null) data
-  int num_def_level_bytes = def_levels_->len();
+  int num_def_level_bytes = def_levels_->bytes_written();
 
-  buffer.Append(num_def_level_bytes);
   buffer.Append(def_levels_->buffer(), num_def_level_bytes);
   // TODO: copy repetition data when we support nested types.
   buffer.Append(values_buffer_, buffer.capacity() - buffer.size());
@@ -732,8 +731,8 @@ void HdfsParquetTableWriter::BaseColumnWriter::NewPage() {
     // The code that populates the column chunk metadata's encodings field
     // relies on these specific values for the definition/repetition level
     // encodings.
-    header.definition_level_encoding = Encoding::RLE;
-    header.repetition_level_encoding = Encoding::RLE;
+    header.definition_level_encoding = Encoding::BIT_PACKED;
+    header.repetition_level_encoding = Encoding::BIT_PACKED;
     current_page_->header.__set_data_page_header(header);
   }
   current_encoding_ = next_page_encoding_;
