@@ -105,14 +105,14 @@ export IMPALA_GTEST_VERSION=1.6.0
 unset IMPALA_GTEST_URL
 export IMPALA_LIBEV_VERSION=4.20
 unset IMPALA_LIBEV_URL
-export IMPALA_LLVM_VERSION=3.9.1
+export IMPALA_LLVM_VERSION=5.0.0
 unset IMPALA_LLVM_URL
-export IMPALA_LLVM_ASAN_VERSION=3.9.1
+export IMPALA_LLVM_ASAN_VERSION=5.0.0
 unset IMPALA_LLVM_ASAN_URL
 
 # Debug builds should use the release+asserts build to get additional coverage.
 # Don't use the LLVM debug build because the binaries are too large to distribute.
-export IMPALA_LLVM_DEBUG_VERSION=3.9.1-asserts
+export IMPALA_LLVM_DEBUG_VERSION=5.0.0-asserts
 unset IMPALA_LLVM_DEBUG_URL
 export IMPALA_LZ4_VERSION=1.7.5
 unset IMPALA_LZ4_URL

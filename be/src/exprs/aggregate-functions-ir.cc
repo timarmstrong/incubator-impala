@@ -1850,8 +1850,6 @@ template void AggregateFunctions::UpdateVal<FloatVal>(
     FunctionContext*, const FloatVal& src, FloatVal* dst);
 template void AggregateFunctions::UpdateVal<DoubleVal>(
     FunctionContext*, const DoubleVal& src, DoubleVal* dst);
-template void AggregateFunctions::UpdateVal<StringVal>(
-    FunctionContext*, const StringVal& src, StringVal* dst);
 template void AggregateFunctions::UpdateVal<TimestampVal>(
     FunctionContext*, const TimestampVal& src, TimestampVal* dst);
 template void AggregateFunctions::UpdateVal<DecimalVal>(
@@ -1906,10 +1904,6 @@ template void AggregateFunctions::Min<FloatVal>(
     FunctionContext*, const FloatVal& src, FloatVal* dst);
 template void AggregateFunctions::Min<DoubleVal>(
     FunctionContext*, const DoubleVal& src, DoubleVal* dst);
-template void AggregateFunctions::Min<StringVal>(
-    FunctionContext*, const StringVal& src, StringVal* dst);
-template void AggregateFunctions::Min<DecimalVal>(
-    FunctionContext*, const DecimalVal& src, DecimalVal* dst);
 
 template void AggregateFunctions::Max<BooleanVal>(
     FunctionContext*, const BooleanVal& src, BooleanVal* dst);
@@ -1925,10 +1919,6 @@ template void AggregateFunctions::Max<FloatVal>(
     FunctionContext*, const FloatVal& src, FloatVal* dst);
 template void AggregateFunctions::Max<DoubleVal>(
     FunctionContext*, const DoubleVal& src, DoubleVal* dst);
-template void AggregateFunctions::Max<StringVal>(
-    FunctionContext*, const StringVal& src, StringVal* dst);
-template void AggregateFunctions::Max<DecimalVal>(
-    FunctionContext*, const DecimalVal& src, DecimalVal* dst);
 
 template void AggregateFunctions::PcUpdate(
     FunctionContext*, const BooleanVal&, StringVal*);
@@ -2137,8 +2127,6 @@ template void AggregateFunctions::HllUpdate(
     FunctionContext*, const StringVal&, StringVal*);
 template void AggregateFunctions::HllUpdate(
     FunctionContext*, const TimestampVal&, StringVal*);
-template void AggregateFunctions::HllUpdate(
-    FunctionContext*, const DecimalVal&, StringVal*);
 
 template void AggregateFunctions::KnuthVarUpdate(
     FunctionContext*, const TinyIntVal&, StringVal*);
@@ -2167,8 +2155,6 @@ template void AggregateFunctions::LastValRemove<FloatVal>(
     FunctionContext*, const FloatVal& src, FloatVal* dst);
 template void AggregateFunctions::LastValRemove<DoubleVal>(
     FunctionContext*, const DoubleVal& src, DoubleVal* dst);
-template void AggregateFunctions::LastValRemove<StringVal>(
-    FunctionContext*, const StringVal& src, StringVal* dst);
 template void AggregateFunctions::LastValRemove<TimestampVal>(
     FunctionContext*, const TimestampVal& src, TimestampVal* dst);
 template void AggregateFunctions::LastValRemove<DecimalVal>(
@@ -2251,8 +2237,6 @@ template FloatVal AggregateFunctions::LastValIgnoreNullsGetValue<FloatVal>(
     FunctionContext*, const StringVal&);
 template DoubleVal AggregateFunctions::LastValIgnoreNullsGetValue<DoubleVal>(
     FunctionContext*, const StringVal&);
-template StringVal AggregateFunctions::LastValIgnoreNullsGetValue<StringVal>(
-    FunctionContext*, const StringVal&);
 template TimestampVal AggregateFunctions::LastValIgnoreNullsGetValue<TimestampVal>(
     FunctionContext*, const StringVal&);
 template DecimalVal AggregateFunctions::LastValIgnoreNullsGetValue<DecimalVal>(
@@ -2271,8 +2255,6 @@ template BigIntVal AggregateFunctions::LastValIgnoreNullsFinalize<BigIntVal>(
 template FloatVal AggregateFunctions::LastValIgnoreNullsFinalize<FloatVal>(
     FunctionContext*, const StringVal&);
 template DoubleVal AggregateFunctions::LastValIgnoreNullsFinalize<DoubleVal>(
-    FunctionContext*, const StringVal&);
-template StringVal AggregateFunctions::LastValIgnoreNullsFinalize<StringVal>(
     FunctionContext*, const StringVal&);
 template TimestampVal AggregateFunctions::LastValIgnoreNullsFinalize<TimestampVal>(
     FunctionContext*, const StringVal&);
@@ -2293,8 +2275,6 @@ template void AggregateFunctions::FirstValUpdate<FloatVal>(
     FunctionContext*, const FloatVal& src, FloatVal* dst);
 template void AggregateFunctions::FirstValUpdate<DoubleVal>(
     FunctionContext*, const DoubleVal& src, DoubleVal* dst);
-template void AggregateFunctions::FirstValUpdate<StringVal>(
-    FunctionContext*, const StringVal& src, StringVal* dst);
 template void AggregateFunctions::FirstValUpdate<TimestampVal>(
     FunctionContext*, const TimestampVal& src, TimestampVal* dst);
 template void AggregateFunctions::FirstValUpdate<DecimalVal>(
@@ -2335,8 +2315,6 @@ template void AggregateFunctions::FirstValIgnoreNullsUpdate<FloatVal>(
     FunctionContext*, const FloatVal& src, FloatVal* dst);
 template void AggregateFunctions::FirstValIgnoreNullsUpdate<DoubleVal>(
     FunctionContext*, const DoubleVal& src, DoubleVal* dst);
-template void AggregateFunctions::FirstValIgnoreNullsUpdate<StringVal>(
-    FunctionContext*, const StringVal& src, StringVal* dst);
 template void AggregateFunctions::FirstValIgnoreNullsUpdate<TimestampVal>(
     FunctionContext*, const TimestampVal& src, TimestampVal* dst);
 template void AggregateFunctions::FirstValIgnoreNullsUpdate<DecimalVal>(
@@ -2356,8 +2334,6 @@ template void AggregateFunctions::OffsetFnInit<FloatVal>(
     FunctionContext*, FloatVal*);
 template void AggregateFunctions::OffsetFnInit<DoubleVal>(
     FunctionContext*, DoubleVal*);
-template void AggregateFunctions::OffsetFnInit<StringVal>(
-    FunctionContext*, StringVal*);
 template void AggregateFunctions::OffsetFnInit<TimestampVal>(
     FunctionContext*, TimestampVal*);
 template void AggregateFunctions::OffsetFnInit<DecimalVal>(

@@ -30,7 +30,7 @@
 #include <llvm/Analysis/InstructionSimplify.h>
 #include <llvm/Analysis/Passes.h>
 #include <llvm/Analysis/TargetTransformInfo.h>
-#include <llvm/Bitcode/ReaderWriter.h>
+#include <llvm/Bitcode/BitcodeReader.h>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
 #include <llvm/ExecutionEngine/MCJIT.h>
 #include <llvm/IR/Constants.h>
@@ -258,12 +258,11 @@ Status LlvmCodeGen::LoadModuleFromMemory(unique_ptr<llvm::MemoryBuffer> module_i
   DCHECK(!module_name.empty());
   SCOPED_TIMER(prepare_module_timer_);
   COUNTER_ADD(module_bitcode_size_, module_ir_buf->getMemBufferRef().getBufferSize());
-  llvm::ErrorOr<unique_ptr<llvm::Module>> tmp_module =
-      getLazyBitcodeModule(std::move(module_ir_buf), context(), false);
+  llvm::Expected<unique_ptr<llvm::Module>> tmp_module =
+      getOwningLazyBitcodeModule(std::move(module_ir_buf), context());
   if (!tmp_module) {
-    stringstream ss;
-    ss << "Could not parse module " << module_name << ": " << tmp_module.getError();
-    return Status(ss.str());
+    return Status(Substitute("Could not parse module $0: $1", module_name,
+        toString(tmp_module.takeError())));
   }
 
   *module = std::move(tmp_module.get());
@@ -614,10 +613,10 @@ Status LlvmCodeGen::MaterializeFunctionHelper(llvm::Function* fn) {
   DCHECK(!is_compiled_);
   if (fn->isIntrinsic() || !fn->isMaterializable()) return Status::OK();
 
-  std::error_code err = module_->materialize(fn);
+  llvm::Error err = module_->materialize(fn);
   if (UNLIKELY(err)) {
     return Status(Substitute("Failed to materialize $0: $1",
-        fn->getName().str(), err.message()));
+        fn->getName().str(), toString(move(err))));
   }
 
   // Materialized functions are marked as not materializable by LLVM.
@@ -715,8 +714,8 @@ bool LlvmCodeGen::VerifyFunction(llvm::Function* fn) {
 
   if (is_corrupt_) {
     string fn_name = fn->getName(); // llvm has some fancy operator overloading
-    LOG(ERROR) << "Function corrupt: " << fn_name;
-    fn->dump();
+    LOG(ERROR) << "Function corrupt: " << fn_name <<"\nFunction Dump: "
+        << LlvmCodeGen::Print(fn);
     return false;
   }
   return true;
@@ -999,15 +998,18 @@ llvm::Function* LlvmCodeGen::FinalizeFunction(llvm::Function* function) {
     return NULL;
   }
   finalized_functions_.insert(function);
-  if (FLAGS_dump_ir) function->dump();
+  if (FLAGS_dump_ir) {
+    string fn_name = function->getName();
+    LOG(INFO) << "Dump of Function "<< fn_name << ": " << LlvmCodeGen::Print(function);
+  }
   return function;
 }
 
 Status LlvmCodeGen::MaterializeModule() {
-  std::error_code err = module_->materializeAll();
+  llvm::Error err = module_->materializeAll();
   if (UNLIKELY(err)) {
     return Status(Substitute("Failed to materialize module $0: $1",
-        module_->getName().str(), err.message()));
+        module_->getName().str(), toString(move(err))));
   }
   return Status::OK();
 }
