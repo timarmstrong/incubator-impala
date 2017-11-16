@@ -457,8 +457,8 @@ string LlvmCodeGen::GetIR(bool full_module) const {
   if (full_module) {
     module_->print(stream, NULL);
   } else {
-    for (int i = 0; i < codegend_functions_.size(); ++i) {
-      codegend_functions_[i]->print(stream, nullptr, false, true);
+    for (int i = 0; i < handcrafted_functions_.size(); ++i) {
+      handcrafted_functions_[i]->print(stream, nullptr, false, true);
     }
   }
   return str;
@@ -745,7 +745,7 @@ LlvmCodeGen::FnPrototype::FnPrototype(
 }
 
 llvm::Function* LlvmCodeGen::FnPrototype::GeneratePrototype(
-    LlvmBuilder* builder, llvm::Value** params, bool print_ir) {
+    LlvmBuilder* builder, llvm::Value** params) {
   vector<llvm::Type*> arguments;
   for (int i = 0; i < args_.size(); ++i) {
     arguments.push_back(args_[i].type);
@@ -768,9 +768,8 @@ llvm::Function* LlvmCodeGen::FnPrototype::GeneratePrototype(
     llvm::BasicBlock* entry_block =
         llvm::BasicBlock::Create(codegen_->context(), "entry", fn);
     builder->SetInsertPoint(entry_block);
+    codegen_->handcrafted_functions_.push_back(fn);
   }
-
-  if (print_ir) codegen_->codegend_functions_.push_back(fn);
   return fn;
 }
 
@@ -840,7 +839,7 @@ Status LlvmCodeGen::LoadFunction(const TFunction& fn, const std::string& symbol,
     // Create a Function* with the generated type. This is only a function
     // declaration, not a definition, since we do not create any basic blocks or
     // instructions in it.
-    *llvm_fn = prototype.GeneratePrototype(NULL, NULL, false);
+    *llvm_fn = prototype.GeneratePrototype(NULL, NULL);
 
     // Associate the dynamically loaded function pointer with the Function* we defined.
     // This tells LLVM where the compiled function definition is located in memory.
@@ -999,6 +998,7 @@ llvm::Function* LlvmCodeGen::FinalizeFunction(llvm::Function* function) {
     function->eraseFromParent(); // deletes function
     return NULL;
   }
+  finalized_functions_.insert(function);
   if (FLAGS_dump_ir) function->dump();
   return function;
 }
@@ -1054,6 +1054,14 @@ Status LlvmCodeGen::FinalizeModule() {
 
   if (is_corrupt_) return Status("Module is corrupt.");
   SCOPED_TIMER(profile_->total_time_counter());
+
+  // Clean up handcrafted functions that have not been finalized. Clean up is done by
+  // deleting the function's body.
+  for (llvm::Function* fn : handcrafted_functions_) {
+    if (finalized_functions_.find(fn) == finalized_functions_.end()) {
+      fn->deleteBody();
+    }
+  }
 
   // Don't waste time optimizing module if there are no functions to JIT. This can happen
   // if the codegen object is created but no functions are successfully codegen'd.
@@ -1196,7 +1204,7 @@ Status LlvmCodeGen::OptimizeModule() {
 void LlvmCodeGen::DestroyModule() {
   // Clear all references to LLVM objects owned by the module.
   loaded_functions_.clear();
-  codegend_functions_.clear();
+  handcrafted_functions_.clear();
   registered_exprs_map_.clear();
   registered_exprs_.clear();
   llvm_intrinsics_.clear();

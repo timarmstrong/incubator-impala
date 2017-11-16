@@ -25,6 +25,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_set>
 #include <boost/scoped_ptr.hpp>
 
 #include <boost/unordered_set.hpp>
@@ -102,6 +103,12 @@ class LlvmBuilder : public llvm::IRBuilder<> {
 /// be called directly.  The test interface can be used to load any precompiled
 /// module or none at all (but this class will not validate the module).
 //
+/// There are two classes of functions defined based on how they are generated:
+/// 1. Handcrafted functions - These functions are build from
+/// scratch using the IRbuilder interface.
+/// 2. Loaded functions - These functions are loaded directly from a cross-compiled IR
+/// module and are either directly used or are cloned and modified before use.
+//
 /// This class is not threadsafe.  During the Prepare() phase of the fragment execution,
 /// nodes should codegen functions, and register those functions with AddFunctionToJit().
 /// Afterward, FinalizeModule() should be called at which point all codegened functions
@@ -168,7 +175,7 @@ class LlvmCodeGen {
 
   /// For debugging. Returns the IR that was generated.  If full_module, the
   /// entire module is dumped, including what was loaded from precompiled IR.
-  /// If false, only output IR for functions which were generated.
+  /// If false, only output IR for functions which were handcrafted.
   std::string GetIR(bool full_module) const;
 
   /// Utility struct that wraps a variable name and llvm type.
@@ -206,18 +213,17 @@ class LlvmCodeGen {
     }
 
     /// Generate LLVM function prototype.
-    /// If a non-null 'builder' is passed, this function will also create the entry block
-    /// and set the builder's insert point to there.
+    /// This is the canonical way to start generating a handcrafted codegen'd function.
+    /// If a non-null 'builder' is passed, this function will also create the entry
+    /// block, set the builder's insert point to there and add it to the list of functions
+    /// handcrafted by impala. FinalizeFunction() should be called for any function
+    /// generated this way before it can be materialized.
     ///
     /// If 'params' is non-null, this function will also return the arguments values
     /// (params[0] is the first arg, etc). In that case, 'params' should be preallocated
     /// to be number of arguments
-    ///
-    /// If 'print_ir' is true, the generated llvm::Function's IR will be printed when
-    /// GetIR() is called. Avoid doing so for IR function prototypes generated for
-    /// externally defined native function.
     llvm::Function* GeneratePrototype(
-        LlvmBuilder* builder = NULL, llvm::Value** params = NULL, bool print_ir = true);
+        LlvmBuilder* builder = NULL, llvm::Value** params = NULL);
 
    private:
     friend class LlvmCodeGen;
@@ -353,7 +359,8 @@ class LlvmCodeGen {
   int InlineConstFnAttrs(const FunctionContext::TypeDesc& return_type,
       const std::vector<FunctionContext::TypeDesc>& arg_types, llvm::Function* fn);
 
-  /// Returns a copy of fn. The copy is added to the module.
+  /// Returns a copy of fn. The copy is added to the module. No need to call
+  /// FinalizeFunction() on the returned function as it is already materialized.
   llvm::Function* CloneFunction(llvm::Function* fn);
 
   /// Replace all uses of the instruction 'from' with the value 'to', and delete
@@ -363,13 +370,19 @@ class LlvmCodeGen {
   /// Returns the i-th argument of fn.
   llvm::Argument* GetArgument(llvm::Function* fn, int i);
 
-  /// Verify function.  This should be called at the end for each codegen'd function.  If
-  /// the function does not verify, it will delete the function and return NULL,
+  /// Verify function. All handcrafted functions need to be finalized before being
+  /// passed to AddFunctionToJit() otherwise their function body will be removed when
+  /// the module is finalized. Also, all loaded functions that need to be JIT compiled
+  /// after modification also need to be finalized.
+  /// If the function does not verify, it will delete the function and return NULL,
   /// otherwise, it returns the function object.
   llvm::Function* FinalizeFunction(llvm::Function* function);
 
   /// Adds the function to be automatically jit compiled when the codegen object is
   /// finalized. FinalizeModule() will set fn_ptr to point to the jitted function.
+  ///
+  /// Pre-condition: FinalizeFunction() must have been called on the function passed to
+  /// this method.
   ///
   /// Only functions registered with AddFunctionToJit() and their dependencies are
   /// compiled by FinalizeModule(): other functions are considered dead code and will
@@ -402,6 +415,8 @@ class LlvmCodeGen {
   /// iff the caller will modify the returned function so that the original unmodified
   /// function remains available. Avoid cloning if possible to reduce compilation time.
   ///
+  /// No need to call FinalizeFunction() on the returned function as it is already
+  /// materialized.
   /// TODO: Return Status instead.
   llvm::Function* GetFunction(IRFunction::Type ir_type, bool clone);
 
@@ -420,7 +435,7 @@ class LlvmCodeGen {
   ///   int32_t Hash(int8_t* data, int len, int32_t seed);
   /// If num_bytes is non-zero, the returned function will be codegen'd to only
   /// work for that number of bytes.  It is invalid to call that function with a
-  /// different 'len'.
+  /// different 'len'. Functions returned by this have already been finalized.
   llvm::Function* GetHashFunction(int num_bytes = -1);
   llvm::Function* GetFnvHashFunction(int num_bytes = -1);
   llvm::Function* GetMurmurHashFunction(int num_bytes = -1);
@@ -746,10 +761,13 @@ class LlvmCodeGen {
   /// Functions parsed from pre-compiled module.  Indexed by ImpalaIR::Function enum
   std::vector<llvm::Function*> loaded_functions_;
 
-  /// Stores functions codegen'd by impala.  This does not contain cross compiled
+  /// Stores functions handcrafted by impala.  This does not contain cross compiled
   /// functions, only function that were generated at runtime.  Does not overlap
   /// with loaded_functions_.
-  std::vector<llvm::Function*> codegend_functions_;
+  std::vector<llvm::Function*> handcrafted_functions_;
+
+  /// Stores the functions that have been finalized.
+  std::unordered_set<llvm::Function*> finalized_functions_;
 
   /// A mapping of unique id to registered expr functions
   std::map<int64_t, llvm::Function*> registered_exprs_map_;

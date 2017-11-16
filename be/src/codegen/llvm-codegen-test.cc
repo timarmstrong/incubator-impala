@@ -163,7 +163,7 @@ llvm::Function* CodegenInnerLoop(
   builder.CreateStore(incremented_value, counter_ptr);
   builder.CreateRetVoid();
 
-  return jitted_loop_call;
+  return codegen->FinalizeFunction(jitted_loop_call);
 }
 
 // This test loads a precompiled IR file (compiled from testdata/llvm/test-loop.cc).
@@ -303,7 +303,7 @@ llvm::Function* CodegenStringTest(LlvmCodeGen* codegen) {
   builder.CreateStore(codegen->GetIntConstant(TYPE_INT, 1), len_ptr);
   builder.CreateRet(len);
 
-  return interop_fn;
+  return codegen->FinalizeFunction(interop_fn);
 }
 
 // This test validates that the llvm StringValue struct matches the c++ stringvalue
