@@ -877,6 +877,11 @@ Status impala::SetQueryOption(const string& key, const string& value,
         query_options->__set_fetch_rows_timeout_ms(requested_timeout);
         break;
       }
+      case TImpalaQueryOptions::ENABLE_PROJECTION_TRIMMING: {
+        query_options->__set_enable_projection_trimming(
+            iequals(value, "true") || iequals(value, "1"));
+        break;
+      }
       default:
         if (IsRemovedQueryOption(key)) {
           LOG(WARNING) << "Ignoring attempt to set removed query option '" << key << "'";

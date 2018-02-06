@@ -26,6 +26,7 @@ import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.analysis.SlotDescriptor;
 import org.apache.impala.analysis.SlotRef;
 import org.apache.impala.analysis.SortInfo;
+import org.apache.impala.common.ImpalaException;
 import org.apache.impala.common.InternalException;
 import org.apache.impala.thrift.TExplainLevel;
 import org.apache.impala.thrift.TPlanNode;
@@ -317,5 +318,25 @@ public class SortNode extends PlanNode {
       Preconditions.checkState(type == TSortType.TOTAL);
       return "SORT";
     }
+  }
+
+  @Override
+  public void substitute(ExprSubstitutionMap smap, Analyzer analyzer)
+      throws ImpalaException {
+    super.substitute(smap, analyzer);
+    resolvedTupleExprs_ = Expr.substituteList(resolvedTupleExprs_, smap, analyzer, true);
+  }
+
+  @Override
+  public void getExprs(List<Expr> exprs) {
+    exprs.addAll(resolvedTupleExprs_);
+  }
+
+  @Override
+  public void validateExprs() {
+    Preconditions.checkState(
+        Expr.isExprListBoundByTupleIds(resolvedTupleExprs_, getChild(0).getTupleIds()));
+    Preconditions.checkState(
+        Expr.isExprListBoundByTupleIds(info_.getSortExprs(), tupleIds_));
   }
 }

@@ -20,6 +20,8 @@ package org.apache.impala.planner;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.impala.analysis.Analyzer;
+import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.analysis.SlotDescriptor;
 import org.apache.impala.analysis.TupleDescriptor;
 import org.apache.impala.catalog.FeTable;
@@ -28,6 +30,7 @@ import org.apache.impala.catalog.Type;
 import org.apache.impala.common.NotImplementedException;
 import org.apache.impala.common.PrintUtils;
 import org.apache.impala.common.RuntimeEnv;
+import org.apache.impala.planner.RuntimeFilterGenerator.RuntimeFilter;
 import org.apache.impala.thrift.TNetworkAddress;
 import org.apache.impala.thrift.TQueryOptions;
 import org.apache.impala.thrift.TScanRangeSpec;
@@ -273,4 +276,15 @@ abstract public class ScanNode extends PlanNode {
    * engine.
    */
   public boolean hasStorageLayerConjuncts() { return false; }
+
+  @Override
+  public void substitute(ExprSubstitutionMap smap, Analyzer analyzer) {
+  }
+
+  @Override
+  public void validateExprs() {
+    for (RuntimeFilter rf: runtimeFilters_) {
+      Preconditions.checkState(rf.getTargetExpr(id_).isBoundByTupleIds(tupleIds_));
+    }
+  }
 }

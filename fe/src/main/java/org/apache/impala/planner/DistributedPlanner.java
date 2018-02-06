@@ -395,11 +395,11 @@ public class DistributedPlanner {
     // The new fragment is hash-partitioned on the lhs input join exprs.
     ExchangeNode lhsExchange =
         new ExchangeNode(ctx_.getNextNodeId(), leftChildFragment.getPlanRoot());
-    lhsExchange.computeStats(null);
+    lhsExchange.computeStats(ctx_.getRootAnalyzer());
     node.setChild(0, lhsExchange);
     ExchangeNode rhsExchange =
         new ExchangeNode(ctx_.getNextNodeId(), rightChildFragment.getPlanRoot());
-    rhsExchange.computeStats(null);
+    rhsExchange.computeStats(ctx_.getRootAnalyzer());
     node.setChild(1, rhsExchange);
 
     // Connect the child fragments in a new fragment, and set the data partition
@@ -1046,7 +1046,7 @@ public class DistributedPlanner {
     // Set limit, offset and merge parameters in the exchange node.
     exchNode.unsetLimit();
     if (hasLimit) exchNode.setLimit(limit);
-    exchNode.setMergeInfo(node.getSortInfo(), offset);
+    exchNode.setMergeInfo(node.getSortInfo().clone(), offset);
 
     // Child nodes should not process the offset. If there is a limit,
     // the child nodes need only return (offset + limit) rows.

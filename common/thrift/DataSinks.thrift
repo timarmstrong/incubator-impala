@@ -45,6 +45,11 @@ enum TTableSinkType {
   KUDU = 2
 }
 
+struct TProjectionInfo {
+  1: list<Exprs.TExpr> src_exprs
+  2: Types.TTupleId dst_tid
+}
+
 // Sink which forwards data to a remote plan fragment,
 // according to the given output partition specification
 // (ie, the m:1 part of an m:n data stream)
@@ -56,6 +61,8 @@ struct TDataStreamSink {
   // If the partitioning type is UNPARTITIONED, the output is broadcast
   // to each destination host.
   2: required Partitions.TDataPartition output_partition
+
+  3: optional TProjectionInfo projection
 }
 
 // Creates a new Hdfs files according to the evaluation of the partitionKeyExprs,

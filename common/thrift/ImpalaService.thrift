@@ -460,6 +460,9 @@ enum TImpalaQueryOptions {
   // client waits for all returned RowBatches to be produced. If the timeout is hit, the
   // client returns whatever rows it has already read. Defaults to 10000 milliseconds.
   FETCH_ROWS_TIMEOUT_MS = 93
+
+  // TODO(Alex): Comment
+  ENABLE_PROJECTION_TRIMMING = 94,
 }
 
 // The summary of a DML statement.

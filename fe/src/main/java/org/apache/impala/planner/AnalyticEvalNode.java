@@ -20,20 +20,21 @@ package org.apache.impala.planner;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import org.apache.impala.analysis.AnalyticWindow;
 import org.apache.impala.analysis.Analyzer;
 import org.apache.impala.analysis.Expr;
 import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.analysis.OrderByElement;
 import org.apache.impala.analysis.TupleDescriptor;
+import org.apache.impala.common.ImpalaException;
 import org.apache.impala.thrift.TAnalyticNode;
 import org.apache.impala.thrift.TExplainLevel;
 import org.apache.impala.thrift.TPlanNode;
 import org.apache.impala.thrift.TPlanNodeType;
 import org.apache.impala.thrift.TQueryOptions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.google.common.base.Joiner;
 import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
@@ -64,8 +65,8 @@ public class AnalyticEvalNode extends PlanNode {
 
   // predicates constructed from partitionExprs_/orderingExprs_ to
   // compare input to buffered tuples
-  private final Expr partitionByEq_;
-  private final Expr orderByEq_;
+  private Expr partitionByEq_;
+  private Expr orderByEq_;
   private final TupleDescriptor bufferedTupleDesc_;
 
   public AnalyticEvalNode(
@@ -258,5 +259,39 @@ public class AnalyticEvalNode extends PlanNode {
         .setMemEstimateBytes(perInstanceMemEstimate)
         .setMinMemReservationBytes(perInstanceMinMemReservation)
         .setSpillableBufferBytes(bufferSize).setMaxRowBufferBytes(bufferSize).build();
+  }
+
+  @Override
+  public void getExprs(List<Expr> exprs) {
+    super.getExprs(exprs);
+    exprs.addAll(analyticFnCalls_);
+    exprs.addAll(substitutedPartitionExprs_);
+    if (partitionByEq_ != null) exprs.add(partitionByEq_);
+    if (orderByEq_ != null) exprs.add(orderByEq_);
+    for (OrderByElement e: orderByElements_) exprs.add(e.getExpr());
+  }
+
+  @Override
+  public void substitute(ExprSubstitutionMap smap, Analyzer analyzer)
+      throws ImpalaException {
+    super.substitute(smap, analyzer);
+    analyticFnCalls_ = Expr.substituteList(analyticFnCalls_, smap, analyzer, true);
+    substitutedPartitionExprs_ =
+        Expr.substituteList(substitutedPartitionExprs_, smap, analyzer, true);
+    orderByElements_ = OrderByElement.substitute(orderByElements_, smap, analyzer);
+    if (partitionByEq_ != null) partitionByEq_ = partitionByEq_.substitute(smap, analyzer, true);
+    if (orderByEq_ != null) orderByEq_ = orderByEq_.substitute(smap, analyzer, true);
+  }
+
+  @Override
+  public void validateExprs() {
+    super.validateExprs();
+    Preconditions.checkState(Expr.isExprListBoundByTupleIds(
+        analyticFnCalls_, getChild(0).getTupleIds()));
+    Preconditions.checkState(Expr.isExprListBoundByTupleIds(
+        substitutedPartitionExprs_, getChild(0).getTupleIds()));
+    for (OrderByElement e: orderByElements_) {
+      Preconditions.checkState(e.getExpr().isBoundByTupleIds(getChild(0).getTupleIds()));
+    }
   }
 }

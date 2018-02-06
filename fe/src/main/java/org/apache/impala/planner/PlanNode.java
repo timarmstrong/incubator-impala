@@ -920,4 +920,19 @@ abstract public class PlanNode extends TreeNode<PlanNode> {
   public void setDisableCodegen(boolean disableCodegen) {
     disableCodegen_ = disableCodegen;
   }
+
+  // TODO(Alex): Need a better name.
+  public void getExprs(List<Expr> exprs) {
+    exprs.addAll(conjuncts_);
+  }
+
+  // TODO(Alex): Implement all of these.
+  public void substitute(ExprSubstitutionMap smap, Analyzer analyzer) throws ImpalaException {
+    conjuncts_ = Expr.substituteList(conjuncts_, smap, analyzer, true);
+    for (RuntimeFilter rf: runtimeFilters_) rf.substituteSrcExpr(smap, analyzer);
+  }
+
+  public void validateExprs() {
+    Preconditions.checkState(Expr.isExprListBoundByTupleIds(conjuncts_, tupleIds_));
+  }
 }

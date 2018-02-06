@@ -20,18 +20,22 @@ package org.apache.impala.planner;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.impala.analysis.AggregateInfo;
 import org.apache.impala.analysis.Analyzer;
 import org.apache.impala.analysis.CaseExpr;
 import org.apache.impala.analysis.CaseWhenClause;
 import org.apache.impala.analysis.Expr;
+import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.analysis.FunctionCallExpr;
 import org.apache.impala.analysis.MultiAggregateInfo;
 import org.apache.impala.analysis.MultiAggregateInfo.AggPhase;
 import org.apache.impala.analysis.NumericLiteral;
+import org.apache.impala.analysis.SlotId;
 import org.apache.impala.analysis.TupleId;
 import org.apache.impala.analysis.ValidTupleIdExpr;
+import org.apache.impala.common.ImpalaException;
 import org.apache.impala.common.InternalException;
 import org.apache.impala.thrift.TAggregationNode;
 import org.apache.impala.thrift.TAggregator;
@@ -579,5 +583,36 @@ public class AggregationNode extends PlanNode {
         .setSpillableBufferBytes(bufferSize)
         .setMaxRowBufferBytes(maxRowBufferSize)
         .build();
+  }
+
+  @Override
+  public void getExprs(List<Expr> exprs) {
+    super.getExprs(exprs);
+    for (AggregateInfo aggInfo : aggInfos_) {
+      exprs.addAll(aggInfo.getAggregateExprs());
+      exprs.addAll(aggInfo.getGroupingExprs());
+    }
+  }
+
+  @Override
+  public void substitute(ExprSubstitutionMap smap, Analyzer analyzer)
+      throws ImpalaException {
+    super.substitute(smap, analyzer);
+    for (AggregateInfo aggInfo : aggInfos_) {
+      aggInfo.substitute(smap, analyzer);
+      aggInfo.checkConsistency();
+    }
+  }
+
+  @Override
+  public void validateExprs() {
+    super.validateExprs();
+    for (AggregateInfo aggInfo : aggInfos_) {
+      Preconditions.checkState(Expr.isExprListBoundByTupleIds(
+          aggInfo.getAggregateExprs(), getChild(0).getTupleIds()));
+      Preconditions.checkState(Expr.isExprListBoundByTupleIds(
+          aggInfo.getGroupingExprs(), getChild(0).getTupleIds()));
+      aggInfo.checkConsistency();
+    }
   }
 }

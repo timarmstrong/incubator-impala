@@ -22,10 +22,12 @@ import java.util.List;
 
 import org.apache.impala.analysis.Analyzer;
 import org.apache.impala.analysis.Expr;
-import org.apache.impala.analysis.TupleDescriptor;
-import org.apache.impala.analysis.TupleId;
+import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.analysis.SlotDescriptor;
 import org.apache.impala.analysis.SlotRef;
+import org.apache.impala.analysis.TupleDescriptor;
+import org.apache.impala.analysis.TupleId;
+import org.apache.impala.common.ImpalaException;
 import org.apache.impala.thrift.TExecNodePhase;
 import org.apache.impala.thrift.TExplainLevel;
 import org.apache.impala.thrift.TExpr;
@@ -84,12 +86,22 @@ public class UnionNode extends PlanNode {
     isInSubplan_ = false;
   }
 
-  protected UnionNode(PlanNodeId id, TupleId tupleId,
-        List<Expr> unionResultExprs, boolean isInSubplan) {
-    super(id, tupleId.asList(), "UNION");
+  private UnionNode(String displayName, PlanNodeId id, TupleId tupleId,
+      List<Expr> unionResultExprs, boolean isInSubplan) {
+    super(id, tupleId.asList(), displayName);
     unionResultExprs_ = unionResultExprs;
     tupleId_ = tupleId;
     isInSubplan_ = isInSubplan;
+  }
+
+  protected UnionNode(PlanNodeId id, TupleId tupleId,
+        List<Expr> unionResultExprs, boolean isInSubplan) {
+    this("UNION", id, tupleId, unionResultExprs, isInSubplan);
+  }
+
+  public static UnionNode createProjection(PlanNodeId id, TupleId tupleId,
+      List<Expr> unionResultExprs, boolean isInSubplan) {
+    return new UnionNode("PROJECT", id, tupleId, unionResultExprs, isInSubplan);
   }
 
   public void addConstExprList(List<Expr> exprs) { constExprLists_.add(exprs); }
@@ -354,6 +366,36 @@ public class UnionNode extends PlanNode {
               childPipeline.getId(), childPipeline.getHeight() + 1, TExecNodePhase.GETNEXT));
         }
       }
+    }
+  }
+
+  @Override
+  public void getExprs(List<Expr> exprs) {
+    for (List<Expr> childExprs: materializedResultExprLists_) exprs.addAll(childExprs);
+  }
+
+  @Override
+  public void substitute(ExprSubstitutionMap smap, Analyzer analyzer)
+      throws ImpalaException {
+    super.substitute(smap, analyzer);
+    for (int i = 0; i < materializedResultExprLists_.size(); ++i) {
+      List<Expr> origExprs = materializedResultExprLists_.get(i);
+      List<Expr> substExps = Expr.substituteList(origExprs, smap, analyzer, true);
+      materializedResultExprLists_.set(i, substExps);
+    }
+  }
+
+  @Override
+  public void validateExprs() {
+    super.validateExprs();
+    Preconditions.checkState(materializedResultExprLists_.size() == children_.size());
+    for (int i = 0; i < materializedResultExprLists_.size(); ++i) {
+      List<Expr> exprs = materializedResultExprLists_.get(i);
+      Preconditions.checkState(
+          Expr.isExprListBoundByTupleIds(exprs, getChild(i).getTupleIds()));
+    }
+    for (List<Expr> constExprs: constExprLists_) {
+      for (Expr e: constExprs) Preconditions.checkState(e.isConstant());
     }
   }
 }

@@ -32,14 +32,20 @@ import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.analysis.InsertStmt;
 import org.apache.impala.analysis.JoinOperator;
 import org.apache.impala.analysis.QueryStmt;
+import org.apache.impala.analysis.SlotDescriptor;
+import org.apache.impala.analysis.SlotId;
+import org.apache.impala.analysis.SlotRef;
 import org.apache.impala.analysis.SortInfo;
+import org.apache.impala.analysis.TupleDescriptor;
 import org.apache.impala.analysis.TupleId;
+import org.apache.impala.analysis.TupleIsNullPredicate;
 import org.apache.impala.catalog.FeHBaseTable;
 import org.apache.impala.catalog.FeKuduTable;
 import org.apache.impala.catalog.FeTable;
 import org.apache.impala.common.ImpalaException;
 import org.apache.impala.common.PrintUtils;
 import org.apache.impala.common.RuntimeEnv;
+import org.apache.impala.common.TreeNode;
 import org.apache.impala.service.BackendConfig;
 import org.apache.impala.thrift.TExplainLevel;
 import org.apache.impala.thrift.TQueryCtx;
@@ -56,6 +62,7 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Predicates;
 import com.google.common.collect.Lists;
 
 import static org.apache.impala.analysis.ToSqlOptions.SHOW_IMPLICIT_CASTS;
@@ -135,14 +142,7 @@ public class Planner {
       fragments = distributedPlanner.createPlanFragments(singleNodePlan);
     }
 
-    // Create runtime filters.
     PlanFragment rootFragment = fragments.get(fragments.size() - 1);
-    if (ctx_.getQueryOptions().getRuntime_filter_mode() != TRuntimeFilterMode.OFF) {
-      RuntimeFilterGenerator.generateRuntimeFilters(ctx_, rootFragment.getPlanRoot());
-      ctx_.getTimeline().markEvent("Runtime filters computed");
-    }
-
-    rootFragment.verifyTree();
     ExprSubstitutionMap rootNodeSmap = rootFragment.getPlanRoot().getOutputSmap();
     List<Expr> resultExprs = null;
     if (ctx_.isInsertOrCtas()) {
@@ -173,6 +173,24 @@ public class Planner {
       resultExprs = queryStmt.getResultExprs();
     }
     rootFragment.setOutputExprs(resultExprs);
+
+    // Create runtime filters. This step relies on the value transfer graph. It
+    // must be performed before projection trimming which may add new tuples/slots
+    // and substitute join exprs without updating the value transfer graph.
+    if (ctx_.getQueryOptions().getRuntime_filter_mode() != TRuntimeFilterMode.OFF) {
+      RuntimeFilterGenerator.generateRuntimeFilters(ctx_, rootFragment.getPlanRoot());
+      ctx_.getTimeline().markEvent("Runtime filters computed");
+    }
+    rootFragment.verifyTree();
+
+    // Apply projection.
+    if (ctx_.getQueryOptions().enable_projection_trimming) {
+      List<Expr> parentExprs = Lists.newArrayList(resultExprs);
+      projectSlots(rootFragment.getPlanRoot(), parentExprs, ctx_.getRootAnalyzer());
+      rootNodeSmap = rootFragment.getPlanRoot().getOutputSmap();
+      resultExprs = Expr.substituteList(resultExprs, rootNodeSmap, ctx_.getRootAnalyzer(), true);
+      rootFragment.setOutputExprs(resultExprs);
+    }
 
     // The check for disabling codegen uses estimates of rows per node so must be done
     // on the distributed plan.
@@ -237,6 +255,87 @@ public class Planner {
     }
 
     return fragments;
+  }
+
+  private ProjectionInfo computeProjection(
+      List<TupleId> tids, List<Expr> exprs, Analyzer analyzer) {
+    // Slot ids required to evaluate exprs.
+    List<SlotId> projectedSids = Lists.newArrayList();
+    Expr.getIds(exprs, null, projectedSids);
+
+    int numMaterializedSlots = 0;
+    List<SlotDescriptor> usedSlotDescs = Lists.newArrayList();
+    for (TupleId tid: tids) {
+      TupleDescriptor tupleDesc = analyzer.getTupleDesc(tid);
+      for (SlotDescriptor slotDesc: tupleDesc.getSlots()) {
+        if (projectedSids.contains(slotDesc.getId())) {
+          Preconditions.checkState(slotDesc.isMaterialized());
+          usedSlotDescs.add(slotDesc);
+        }
+        if (slotDesc.isMaterialized()) ++numMaterializedSlots;
+      }
+    }
+    // Only apply projection if necessary.
+    if (usedSlotDescs.size() == numMaterializedSlots) return null;
+    Preconditions.checkState(usedSlotDescs.size() < numMaterializedSlots);
+
+    TupleDescriptor projectedTuple =
+        analyzer.getDescTbl().createTupleDescriptor("projection");
+    ExprSubstitutionMap projectionSmap = new ExprSubstitutionMap();
+    for (SlotDescriptor slotDesc: usedSlotDescs) {
+      SlotDescriptor projectedSlotDesc = analyzer.copySlotDescriptor(slotDesc, projectedTuple);
+      projectedSlotDesc.setIsMaterialized(true);
+      projectedSlotDesc.setSourceExpr(new SlotRef(slotDesc));
+      projectionSmap.put(new SlotRef(slotDesc), new SlotRef(projectedSlotDesc));
+    }
+
+    // Materialize TupleIsNullPredicates.
+    List<TupleIsNullPredicate> tupleIsNullPreds = Lists.newArrayList();
+    TreeNode.collect(exprs, Predicates.instanceOf(TupleIsNullPredicate.class), tupleIsNullPreds);
+    Expr.removeDuplicates(tupleIsNullPreds);
+    for (TupleIsNullPredicate tupleIsNullPred: tupleIsNullPreds) {
+      SlotDescriptor slotDesc = analyzer.addSlotDescriptor(projectedTuple);
+      slotDesc.initFromExpr(tupleIsNullPred);
+      projectionSmap.put(tupleIsNullPred.clone(), new SlotRef(slotDesc));
+    }
+
+    projectedTuple.computeMemLayout();
+    return new ProjectionInfo(projectedTuple, projectionSmap);
+  }
+
+  public void projectSlots(PlanNode node, List<Expr> parentExprs, Analyzer analyzer) throws ImpalaException {
+    List<Expr> localParentExprs = Lists.newArrayList(parentExprs);
+    node.getExprs(parentExprs);
+    // TODO: Add optimizations to clear parentExprs.
+    for (PlanNode child: node.getChildren()) projectSlots(child, parentExprs, analyzer);
+
+    ProjectionInfo projection = null;
+    if (node instanceof ExchangeNode) {
+      node.getExprs(localParentExprs);
+      ExchangeNode exchNode = (ExchangeNode) node;
+      List<Expr> substLocalParentExprs = Expr.substituteList(
+          localParentExprs, exchNode.getChild(0).getOutputSmap(), analyzer, true);
+      projection = computeProjection(exchNode.getChild(0).getTupleIds(), substLocalParentExprs, analyzer);
+      if (projection != null) {
+        PlanFragment inputFragment = node.getChild(0).getFragment();
+        // TODO(Alex): Force no passthrough.
+        UnionNode unionNode = UnionNode.createProjection(ctx_.getNextNodeId(),
+            projection.tupleDesc.getId(), projection.smap.getRhs(), false);
+        unionNode.addChild(inputFragment.getPlanRoot(), projection.smap.getLhs());
+        unionNode.setOutputSmap(ExprSubstitutionMap.compose(inputFragment.getPlanRoot().getOutputSmap(), projection.smap, analyzer));
+        unionNode.init(analyzer);
+        inputFragment.setPlanRoot(unionNode);
+        node.setChild(0, unionNode);
+      }
+    }
+
+    // Compute row composition, apply child smaps and re-compute stats.
+    ExprSubstitutionMap smap = node.getCombinedChildSmap();
+    node.substitute(smap, analyzer);
+    node.setOutputSmap(smap);
+    node.computeTupleIds();
+    node.validateExprs(); // for debugging
+    node.computeStats(analyzer);
   }
 
   /**
