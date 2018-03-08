@@ -3085,6 +3085,49 @@ TEST_F(ExprTest, CastExprs) {
   TestIsNull("cast('1909-1-2 12:32:1.111bar' as timestamp)", TYPE_TIMESTAMP);
   TestIsNull("cast('1909-10-2 12:32:1.111.111.2' as timestamp)", TYPE_TIMESTAMP);
 
+  // Test various ways of truncating a "lazy" format to produce an invalid timestamp.
+  TestIsNull("cast('1909-10-2 12:32:1.' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12:32:11.' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12:32:11. ' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12:32:' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12:32: ' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 1:32:' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 1:2:' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 1:2' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 1:2 ' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12:' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12 ' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 2' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10- ' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909' as timestamp)", TYPE_TIMESTAMP);
+
+  // Test missing number from format.
+  TestIsNull("cast('1909-10-2 12:32:.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12::1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 :32:1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10- 12:32:1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909--2 12:32:1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('-10-2 12:32:1.9999' as timestamp)", TYPE_TIMESTAMP);
+
+  // Test duplicate separators - should return NULL because not a valid format.
+  TestIsNull("cast('1909--10-2 12:32:1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10--2 12:32:1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12::32:1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12:32::1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12:32:1..9999' as timestamp)", TYPE_TIMESTAMP);
+
+  // Test numbers with too many digits in date/time - shuld return NULL because not a
+  // valid timestamp.
+  TestIsNull("cast('19097-10-2 12:32:1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-107-2 12:32:1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-277 12:32:1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 127:32:1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12:327:1.9999' as timestamp)", TYPE_TIMESTAMP);
+  TestIsNull("cast('1909-10-2 12:32:177.9999' as timestamp)", TYPE_TIMESTAMP);
 
   // IMPALA-3163: Test precise conversion from Decimal to Timestamp.
   TestTimestampValue("cast(cast(1457473016.1230 as decimal(17,4)) as timestamp)",
