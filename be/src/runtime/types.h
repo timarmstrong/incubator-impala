@@ -303,6 +303,7 @@ struct ColumnType {
 
 std::ostream& operator<<(std::ostream& os, const ColumnType& type);
 
+
 }
 
 #endif
