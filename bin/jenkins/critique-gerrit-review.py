@@ -114,13 +114,17 @@ def post_review_to_gerrit(review_input):
   environment variables set by the gerrit jenkins trigger."""
   change_num = environ["GERRIT_CHANGE_NUMBER"]
   patch_num = environ["GERRIT_PATCHSET_NUMBER"]
-  proc = Popen(["ssh", "-p", environ["GERRIT_PORT"],
+  print str(["ssh", "-p", environ["GERRIT_PORT"],
                 "impala-public-jenkins@" + environ["GERRIT_HOST"], "gerrit", "review",
                 "--project", environ["GERRIT_PROJECT"], "--json",
-                "{0},{1}".format(change_num, patch_num)], stdin=PIPE)
-  proc.communicate(json.dumps(review_input))
-  if proc.returncode != 0:
-    raise Exception("Error posting review to gerrit.")
+                "{0},{1}".format(change_num, patch_num)])
+  #proc = Popen(["ssh", "-p", environ["GERRIT_PORT"],
+  #              "impala-public-jenkins@" + environ["GERRIT_HOST"], "gerrit", "review",
+  #              "--project", environ["GERRIT_PROJECT"], "--json",
+  #              "{0},{1}".format(change_num, patch_num)], stdin=PIPE)
+  # proc.communicate(json.dumps(review_input))
+  # if proc.returncode != 0:
+  #   raise Exception("Error posting review to gerrit.")
 
 
 if __name__ == "__main__":
