@@ -286,6 +286,8 @@ class TestDdlStatements(TestDdlBase):
   def test_create_kudu(self, vector, unique_database):
     vector.get_value('exec_option')['abort_on_error'] = False
     vector.get_value('exec_option')['kudu_read_mode'] = "READ_AT_SNAPSHOT"
+    # TODO: there is a hardcoded localhost in the test file.
+    # pytest.skip()
     self.run_test_case('QueryTest/kudu_create', vector, use_db=unique_database,
         multiple_impalad=self._use_multiple_impalad(vector))
 
@@ -532,7 +534,7 @@ class TestDdlStatements(TestDdlBase):
       num_attempts = 1
     else:
       num_attempts = 60
-    for impalad in ImpalaCluster().impalads:
+    for impalad in ImpalaCluster.get_e2e_test_cluster().impalads:
       client = impalad.service.create_beeswax_client()
       try:
         for attempt in itertools.count(1):
@@ -554,7 +556,7 @@ class TestDdlStatements(TestDdlBase):
 
   def test_views_describe(self, vector, unique_database):
     # IMPALA-6896: Tests that altered views can be described by all impalads.
-    impala_cluster = ImpalaCluster()
+    impala_cluster = ImpalaCluster.get_e2e_test_cluster()
     impalads = impala_cluster.impalads
     view_name = "%s.test_describe_view" % unique_database
     query_opts = vector.get_value('exec_option')
