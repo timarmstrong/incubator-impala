@@ -74,6 +74,12 @@ class SetMetric : public Metric {
 
   void Reset() { value_.clear(); }
 
+  virtual TMetricKind::type ToPrometheus(
+      std::string name, std::stringstream* val, std::stringstream* metric_kind) {
+    // this is not supported type in prometheus, so ignore
+    return TMetricKind::SET;
+  }
+
   virtual void ToJson(rapidjson::Document* document, rapidjson::Value* value) {
     rapidjson::Value container(rapidjson::kObjectType);
     AddStandardFields(document, &container);
@@ -155,6 +161,58 @@ class StatsMetric : public Metric {
   void Reset() {
     boost::lock_guard<boost::mutex> l(lock_);
     acc_ = Accumulator();
+  }
+
+  virtual TMetricKind::type ToPrometheus(
+      std::string name, std::stringstream* val, std::stringstream* metric_kind) {
+    boost::lock_guard<boost::mutex> l(lock_);
+
+    *val << name << "_total " << static_cast<uint64_t>(boost::accumulators::count(acc_))
+         << "\n";
+
+    if (boost::accumulators::count(acc_) > 0) {
+      std::stringstream tempval;
+      string str_val;
+      tempval << value_;
+      // check if unit its 'TIMS_MS','TIME_US' or 'TIME_NS' and convert it to seconds,
+      // this is because prometheus only supports time format in seconds
+      str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      *val << name << "_last " << str_val << "\n";
+
+      if (StatsSelection & StatsType::MIN) {
+        tempval.clear();
+        tempval.str("");
+        tempval << boost::accumulators::min(acc_);
+        str_val = ConvertToPrometheusSecs(&tempval, unit_);
+        *val << name << "_min " << str_val << "\n";
+      }
+
+      if (StatsSelection & StatsType::MAX) {
+        tempval.clear();
+        tempval.str("");
+        tempval << boost::accumulators::max(acc_);
+        str_val = ConvertToPrometheusSecs(&tempval, unit_);
+        *val << name << "_max " << str_val << "\n";
+      }
+
+      if (StatsSelection & StatsType::MEAN) {
+        tempval.clear();
+        tempval.str("");
+        tempval << boost::accumulators::mean(acc_);
+        str_val = ConvertToPrometheusSecs(&tempval, unit_);
+        *val << name << "_mean " << str_val << "\n";
+      }
+
+      if (StatsSelection & StatsType::STDDEV) {
+        tempval.clear();
+        tempval.str("");
+        tempval << std::sqrt(boost::accumulators::variance(acc_));
+        str_val = ConvertToPrometheusSecs(&tempval, unit_);
+        *val << name << "_stddev " << str_val << "\n";
+      }
+    }
+    *metric_kind << "# TYPE " << name << " counter";
+    return TMetricKind::STATS;
   }
 
   virtual void ToJson(rapidjson::Document* document, rapidjson::Value* val) {
