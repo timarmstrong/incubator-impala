@@ -109,21 +109,6 @@ class Metric {
   /// representation that is often displayed in webpages etc.
   virtual std::string ToHumanReadable() = 0;
 
-  std::string ConvertToPrometheusSecs(std::stringstream* val, TUnit::type unit) {
-    double value;
-    std::stringstream ret;
-    *val >> value;
-    if (unit == TUnit::type::TIME_MS) {
-      value /= 1000;
-    } else if (unit == TUnit::type::TIME_US) {
-      value /= 1000000;
-    } else if (unit == TUnit::type::TIME_NS) {
-      value /= 1000000000;
-    }
-    ret << value;
-    return ret.str();
-  }
-
   const std::string& key() const { return key_; }
   const std::string& description() const { return description_; }
 
@@ -143,6 +128,25 @@ class Metric {
   /// to 'val'.
   void AddStandardFields(rapidjson::Document* document, rapidjson::Value* val);
 };
+
+template <typename T>
+inline double ConvertToPrometheusSecs(const T& val, TUnit::type unit) {
+  double value = val;
+  if (unit == TUnit::type::TIME_MS) {
+    value /= 1000;
+  } else if (unit == TUnit::type::TIME_US) {
+    value /= 1000000;
+  } else if (unit == TUnit::type::TIME_NS) {
+    value /= 1000000000;
+  }
+  return value;
+}
+
+template <>
+inline double ConvertToPrometheusSecs<std::string>(const std::string& val, TUnit::type unit) {
+  DCHECK(false) << "Should not be called for string metrics";
+  return 0.0;
+}
 
 /// A ScalarMetric has a value which is a simple primitive type: e.g. integers, strings
 /// and floats. It is parameterised not only by the type of its value, but by both the
@@ -186,12 +190,15 @@ class ScalarMetric: public Metric {
 
   virtual TMetricKind::type ToPrometheus(
       std::string name, std::stringstream* val, std::stringstream* metric_kind) override {
-    std::stringstream tempval;
-    tempval << GetValue();
-    // check if unit its 'TIMS_MS','TIME_US' or 'TIME_NS' and convert it to seconds,
-    // this is because prometheus only supports time format in seconds
-    std::string str_val = ConvertToPrometheusSecs(&tempval, unit());
-    *val << str_val;
+    // TODO: move this branch into a helper function.
+    if (unit_ == TUnit::type::TIME_MS || unit_ == TUnit::type::TIME_US ||
+        unit_ == TUnit::type::TIME_NS) {
+      // check if unit its 'TIME_MS','TIME_US' or 'TIME_NS' and convert it to seconds,
+      // this is because prometheus only supports time format in seconds
+      *val << ConvertToPrometheusSecs(GetValue(), unit());
+    } else {
+      *val << GetValue();
+    }
 
     std::string metric_type = PrintThriftEnum(kind()).c_str();
     // convert metric type to lower case, that's what prometheus expects

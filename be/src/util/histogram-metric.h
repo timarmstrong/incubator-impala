@@ -80,49 +80,57 @@ class HistogramMetric : public Metric {
       tempval << histogram_->ValueAtPercentile(25);
       // check if unit its 'TIMS_MS','TIME_US' or 'TIME_NS' and convert it to seconds,
       // this is because prometheus only supports time format in seconds
-      string str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      // string str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      string str_val = tempval.str();
       *value << name << "{le=\"0.2\"} " << str_val << "\n";
 
       tempval.clear();
       tempval.str("");
       tempval << histogram_->ValueAtPercentile(50);
-      str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      // str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      str_val = tempval.str();
       *value << name << "{le=\"0.5\"} " << str_val << "\n";
 
       tempval.clear();
       tempval.str("");
       tempval << histogram_->ValueAtPercentile(75);
-      str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      // str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      str_val = tempval.str();
       *value << name << "{le=\"0.7\"} " << str_val << "\n";
 
       tempval.clear();
       tempval.str("");
       tempval << histogram_->ValueAtPercentile(90);
-      str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      // str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      str_val = tempval.str();
       *value << name << "{le=\"0.9\"} " << str_val << "\n";
 
       tempval.clear();
       tempval.str("");
       tempval << histogram_->ValueAtPercentile(95);
-      str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      // str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      str_val = tempval.str();
       *value << name << "{le=\"0.95\"} " << str_val << "\n";
 
       tempval.clear();
       tempval.str("");
       tempval << histogram_->ValueAtPercentile(99.9);
-      str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      // str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      str_val = tempval.str();
       *value << name << "{le=\"0.999\"} " << str_val << "\n";
 
       tempval.clear();
       tempval.str("");
       tempval << histogram_->MaxValue();
-      str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      // str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      str_val = tempval.str();
       *value << name << "_max " << str_val << "\n";
 
       tempval.clear();
       tempval.str("");
       tempval << histogram_->MinValue();
-      str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      // str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      str_val = tempval.str();
       *value << name << "_min " << str_val << "\n";
 
       *value << name << "_count " << histogram_->TotalCount();

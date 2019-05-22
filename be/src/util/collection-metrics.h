@@ -176,14 +176,15 @@ class StatsMetric : public Metric {
       tempval << value_;
       // check if unit its 'TIMS_MS','TIME_US' or 'TIME_NS' and convert it to seconds,
       // this is because prometheus only supports time format in seconds
-      str_val = ConvertToPrometheusSecs(&tempval, unit_);
-      *val << name << "_last " << str_val << "\n";
+      // str_val = ConvertToPrometheusSecs(&tempval, unit_);
+      *val << name << "_last " <<  value_ << "\n";
 
       if (StatsSelection & StatsType::MIN) {
         tempval.clear();
         tempval.str("");
         tempval << boost::accumulators::min(acc_);
-        str_val = ConvertToPrometheusSecs(&tempval, unit_);
+        // str_val = ConvertToPrometheusSecs(&tempval, unit_);
+        str_val = tempval.str();
         *val << name << "_min " << str_val << "\n";
       }
 
@@ -191,7 +192,8 @@ class StatsMetric : public Metric {
         tempval.clear();
         tempval.str("");
         tempval << boost::accumulators::max(acc_);
-        str_val = ConvertToPrometheusSecs(&tempval, unit_);
+        str_val = tempval.str();
+        // str_val = ConvertToPrometheusSecs(&tempval, unit_);
         *val << name << "_max " << str_val << "\n";
       }
 
@@ -199,7 +201,8 @@ class StatsMetric : public Metric {
         tempval.clear();
         tempval.str("");
         tempval << boost::accumulators::mean(acc_);
-        str_val = ConvertToPrometheusSecs(&tempval, unit_);
+        str_val = tempval.str();
+        // str_val = ConvertToPrometheusSecs(&tempval, unit_);
         *val << name << "_mean " << str_val << "\n";
       }
 
@@ -207,7 +210,8 @@ class StatsMetric : public Metric {
         tempval.clear();
         tempval.str("");
         tempval << std::sqrt(boost::accumulators::variance(acc_));
-        str_val = ConvertToPrometheusSecs(&tempval, unit_);
+        str_val = tempval.str();
+        // str_val = ConvertToPrometheusSecs(&tempval, unit_);
         *val << name << "_stddev " << str_val << "\n";
       }
     }
