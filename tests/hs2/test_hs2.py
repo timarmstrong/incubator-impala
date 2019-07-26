@@ -30,7 +30,7 @@ from tests.common.environ import ImpalaTestClusterProperties
 from tests.common.skip import SkipIfDockerizedCluster
 from tests.hs2.hs2_test_suite import (HS2TestSuite, needs_session,
     operation_id_to_query_id, create_session_handle_without_secret,
-    create_op_handle_without_secret)
+    create_op_handle_without_secret, needs_session_cluster_properties)
 from TCLIService import TCLIService
 
 LOG = logging.getLogger('test_hs2')
@@ -437,8 +437,8 @@ class TestHS2(HS2TestSuite):
     TestHS2.check_invalid_session(self.hs2_client.GetSchemas(get_schemas_req))
 
   @pytest.mark.execute_serially
-  @needs_session()
-  def test_get_tables(self):
+  @needs_session_cluster_properties()
+  def test_get_tables(self, cluster_properties):
     """Basic test for the GetTables() HS2 method. Needs to execute serially because
     the test depends on controlling whether a table is loaded or not and other
     concurrent tests loading or invalidating tables could interfere with it."""
@@ -476,7 +476,8 @@ class TestHS2(HS2TestSuite):
         if i == 0:
           assert table_remarks == ""
         else:
-          assert table_remarks == "table comment"
+          if not cluster_properties.is_catalog_v2_cluster():
+            assert table_remarks == "table comment"
         # Ensure the table is loaded for the second iteration.
         self.execute_query("describe {0}".format(table))
 
