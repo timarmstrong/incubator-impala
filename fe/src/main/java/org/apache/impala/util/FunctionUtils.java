@@ -291,6 +291,13 @@ public abstract class FunctionUtils {
     }
 
     private int typeCompare(Type t1, Type t2) {
+      if (t1.isComplexType()) {
+        if (!t2.isComplexType()) return -1;
+        // Both are complex. Consider equal - there shouldn't be multiple valid
+        // overloads for a complex type that can match a specific input type.
+        return 0;
+      }
+      if (t2.isComplexType()) return 1;
       Preconditions.checkState(!t1.isComplexType());
       Preconditions.checkState(!t2.isComplexType());
       return Integer.compare(t1.getPrimitiveType().ordinal(),

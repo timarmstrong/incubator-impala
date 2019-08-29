@@ -50,6 +50,12 @@ public class ArrayType extends Type {
   }
 
   @Override
+  public boolean matchesType(Type t) {
+    return t instanceof ArrayType &&
+        itemType_.matchesType(((ArrayType) t).getItemType());
+  }
+
+  @Override
   public void toThrift(TColumnType container) {
     TTypeNode node = new TTypeNode();
     container.types.add(node);

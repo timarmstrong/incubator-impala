@@ -17,6 +17,7 @@
 
 package org.apache.impala.analysis;
 
+import org.apache.impala.catalog.ArrayType;
 import org.apache.impala.catalog.Db;
 import org.apache.impala.catalog.FeTable;
 import org.apache.impala.catalog.Function;
@@ -28,11 +29,14 @@ import org.apache.impala.common.AnalysisException;
 import org.apache.impala.common.Reference;
 import org.apache.impala.thrift.TExprNode;
 import org.apache.impala.thrift.TExprNodeType;
+
 import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 
 public class IsNullPredicate extends Predicate {
+  private static final ArrayType DUMMY_COLLECTION_TYPE = new ArrayType(ScalarType.INT);
+
   private final boolean isNotNull_;
 
   private static final String IS_NULL = "is_null_pred";
@@ -68,13 +72,18 @@ public class IsNullPredicate extends Predicate {
             udfType.length() + udfType +
             "EEENS2_10BooleanValEPNS2_15FunctionContextERKT_";
       }
-      db.addBuiltin(ScalarFunction.createBuiltinOperator(
-          IS_NULL, isNullSymbol, Lists.newArrayList(t), Type.BOOLEAN));
-
-      String isNotNullSymbol = isNullSymbol.replace("6IsNull", "9IsNotNull");
-      db.addBuiltin(ScalarFunction.createBuiltinOperator(
-          IS_NOT_NULL, isNotNullSymbol, Lists.newArrayList(t), Type.BOOLEAN));
+      addBuiltinFn(db, t, isNullSymbol);
     }
+    addBuiltinFn(db, DUMMY_COLLECTION_TYPE, "_ZN6impala15IsNullPredicate6IsNullIN10impala_udf13CollectionValEEENS2_10BooleanValEPNS2_15FunctionContextERKT_");
+  }
+
+  private static void addBuiltinFn(Db db, Type type, String isNullSymbol) {
+    db.addBuiltin(ScalarFunction.createBuiltinOperator(
+        IS_NULL, isNullSymbol, Lists.newArrayList(type), Type.BOOLEAN));
+
+    String isNotNullSymbol = isNullSymbol.replace("6IsNull", "9IsNotNull");
+    db.addBuiltin(ScalarFunction.createBuiltinOperator(
+        IS_NOT_NULL, isNotNullSymbol, Lists.newArrayList(type), Type.BOOLEAN));
   }
 
   @Override
@@ -122,12 +131,10 @@ public class IsNullPredicate extends Predicate {
     }
 
     if (getChild(0).getType().isComplexType()) {
-      String errorMsg = (isNotNull_ ? "IS NOT NULL" : "IS NULL") +
-         " predicate does not support complex types: ";
-      throw new AnalysisException(errorMsg + toSqlImpl());
-    }
-
-    if (isNotNull_) {
+      fn_ = getBuiltinFunction(
+          analyzer, isNotNull_ ? IS_NOT_NULL : IS_NULL, new Type[] {DUMMY_COLLECTION_TYPE}, CompareMode.IS_IDENTICAL);
+      Preconditions.checkNotNull(fn_);
+    } else if (isNotNull_) {
       fn_ = getBuiltinFunction(
           analyzer, IS_NOT_NULL, collectChildReturnTypes(), CompareMode.IS_IDENTICAL);
     } else {
