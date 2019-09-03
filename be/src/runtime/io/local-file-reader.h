@@ -30,12 +30,13 @@ public:
   ~LocalFileReader() {}
 
   virtual Status Open(bool use_file_handle_cache) override;
-  virtual Status ReadFromPos(int64_t file_offset, uint8_t* buffer,
-      int64_t bytes_to_read, int64_t* bytes_read, bool* eof) override;
+  virtual Status ReadFromPos(DiskQueue* disk_queue, int64_t file_offset,
+      uint8_t* buffer, int64_t bytes_to_read, int64_t* bytes_read, bool* eof) override;
   /// We don't cache files of the local file system.
   virtual void CachedFile(uint8_t** data, int64_t* length) override;
   virtual void Close() override;
-private:
+
+ private:
   /// Points to a C FILE object between calls to Open() and Close(), otherwise nullptr.
   FILE* file_ = nullptr;
 };
