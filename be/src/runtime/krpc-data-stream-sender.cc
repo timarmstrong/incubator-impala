@@ -866,6 +866,7 @@ Status KrpcDataStreamSender::Send(RuntimeState* state, RowBatch* batch) {
   DCHECK(!flushed_);
 
   if (batch->num_rows() == 0) return Status::OK();
+  // TODO: will need to apply projection here
   if (partition_type_ == TPartitionType::UNPARTITIONED) {
     OutboundRowBatch* outbound_batch = &outbound_batches_[next_batch_idx_];
     RETURN_IF_ERROR(SerializeBatch(batch, outbound_batch, channels_.size()));

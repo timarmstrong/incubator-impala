@@ -26,6 +26,7 @@ import java.util.Map;
 import org.apache.impala.analysis.Analyzer;
 import org.apache.impala.analysis.BinaryPredicate;
 import org.apache.impala.analysis.Expr;
+import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.analysis.JoinOperator;
 import org.apache.impala.analysis.SlotDescriptor;
 import org.apache.impala.analysis.SlotRef;
@@ -35,6 +36,7 @@ import org.apache.impala.catalog.FeTable;
 import org.apache.impala.common.ImpalaException;
 import org.apache.impala.common.Pair;
 import org.apache.impala.thrift.TExecNodePhase;
+import org.apache.impala.planner.RuntimeFilterGenerator.RuntimeFilter;
 import org.apache.impala.thrift.TJoinDistributionMode;
 import org.apache.impala.thrift.TQueryOptions;
 import org.slf4j.Logger;
@@ -712,6 +714,39 @@ public abstract class JoinNode extends PlanNode {
         pipelines_.add(new PipelineMembership(
             buildPipeline.getId(), buildPipeline.getHeight() + 1, TExecNodePhase.OPEN));
       }
+    }
+  }
+
+  @Override
+  protected void collectExprsWithSlotRefsForSubclass(List<Expr> exprs) {
+    exprs.addAll(eqJoinConjuncts_);
+    exprs.addAll(otherJoinConjuncts_);
+  }
+
+  @Override
+  protected void substituteExprsForSubclass(
+      ExprSubstitutionMap smap, Analyzer analyzer) throws ImpalaException {
+    List<BinaryPredicate> newEqJoinConjuncts = new ArrayList<>();
+    for (BinaryPredicate bp: eqJoinConjuncts_) {
+      newEqJoinConjuncts.add((BinaryPredicate) bp.substitute(smap, analyzer, true));
+    }
+    eqJoinConjuncts_ = newEqJoinConjuncts;
+    otherJoinConjuncts_ = Expr.substituteList(otherJoinConjuncts_, smap, analyzer, true);
+  }
+
+  @Override
+  public void validateExprs() {
+    super.validateExprs();
+    // Semi joins output a subset of its child tuples. The join conjuncts are evaluated
+    // over the child tuples.
+    List<TupleId> childTids = new ArrayList<>();
+    for (PlanNode child: children_) childTids.addAll(child.getTupleIds());
+    Preconditions.checkState(
+        Expr.isExprListBoundByTupleIds(eqJoinConjuncts_, childTids));
+    Preconditions.checkState(
+        Expr.isExprListBoundByTupleIds(otherJoinConjuncts_, childTids));
+    for (RuntimeFilter rf: runtimeFilters_) {
+      Preconditions.checkState(rf.getSrcExpr().isBoundByTupleIds(childTids));
     }
   }
 }

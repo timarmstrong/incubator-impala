@@ -18,8 +18,11 @@
 package org.apache.impala.planner;
 
 import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.impala.analysis.Analyzer;
+import org.apache.impala.analysis.Expr;
+import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.common.InternalException;
 import org.apache.impala.thrift.TExecNodePhase;
 import org.apache.impala.thrift.TExplainLevel;
@@ -143,6 +146,17 @@ public class SubplanNode extends PlanNode {
       }
     }
     return output.toString();
+  }
+
+  @Override
+  protected void collectExprsWithSlotRefsForSubclass(List<Expr> exprs) {
+    // No exprs aside from conjuncts in this node.
+  }
+
+  @Override
+  protected void substituteExprsForSubclass(
+      ExprSubstitutionMap smap, Analyzer analyzer) {
+    // No exprs aside from conjucntions in this node.
   }
 
   @Override

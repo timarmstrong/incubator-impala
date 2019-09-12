@@ -17,7 +17,11 @@
 
 package org.apache.impala.planner;
 
+import java.util.List;
+
 import org.apache.impala.analysis.Analyzer;
+import org.apache.impala.analysis.Expr;
+import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.common.ImpalaException;
 import org.apache.impala.thrift.TExplainLevel;
 import org.apache.impala.thrift.TPlanNode;
@@ -81,6 +85,16 @@ public class SingularRowSrcNode extends PlanNode {
           "%sparent-subplan=%s\n", detailPrefix, containingSubplanNode_.getId()));
     }
     return output.toString();
+  }
+
+  @Override
+  protected void collectExprsWithSlotRefsForSubclass(List<Expr> exprs) {
+    // No exprs.
+  }
+
+  @Override
+  protected void substituteExprsForSubclass(ExprSubstitutionMap smap, Analyzer analyzer) {
+    // No exprs.
   }
 
   @Override

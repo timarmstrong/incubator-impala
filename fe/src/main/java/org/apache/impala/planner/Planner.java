@@ -135,14 +135,7 @@ public class Planner {
       fragments = distributedPlanner.createPlanFragments(singleNodePlan);
     }
 
-    // Create runtime filters.
     PlanFragment rootFragment = fragments.get(fragments.size() - 1);
-    if (ctx_.getQueryOptions().getRuntime_filter_mode() != TRuntimeFilterMode.OFF) {
-      RuntimeFilterGenerator.generateRuntimeFilters(ctx_, rootFragment.getPlanRoot());
-      ctx_.getTimeline().markEvent("Runtime filters computed");
-    }
-
-    rootFragment.verifyTree();
     ExprSubstitutionMap rootNodeSmap = rootFragment.getPlanRoot().getOutputSmap();
     List<Expr> resultExprs = null;
     if (ctx_.isInsertOrCtas()) {
@@ -173,6 +166,20 @@ public class Planner {
       resultExprs = queryStmt.getResultExprs();
     }
     rootFragment.setOutputExprs(resultExprs);
+
+    // Create runtime filters. This step relies on the value transfer graph. It
+    // must be performed before projection trimming which may add new tuples/slots
+    // and substitute join exprs without updating the value transfer graph.
+    if (ctx_.getQueryOptions().getRuntime_filter_mode() != TRuntimeFilterMode.OFF) {
+      RuntimeFilterGenerator.generateRuntimeFilters(ctx_, rootFragment.getPlanRoot());
+      ctx_.getTimeline().markEvent("Runtime filters computed");
+    }
+    rootFragment.verifyTree();
+
+    // Apply projection.
+    if (ctx_.getQueryOptions().enable_projection_trimming) {
+      resultExprs = SlotProjectionPass.applyProjection(ctx_, rootFragment, resultExprs);
+    }
 
     // The check for disabling codegen uses estimates of rows per node so must be done
     // on the distributed plan.

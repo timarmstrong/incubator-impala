@@ -20,6 +20,8 @@ package org.apache.impala.planner;
 import java.util.List;
 
 import org.apache.impala.analysis.Analyzer;
+import org.apache.impala.analysis.Expr;
+import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.analysis.TupleId;
 import org.apache.impala.thrift.TExplainLevel;
 import org.apache.impala.thrift.TPlanNode;
@@ -69,6 +71,17 @@ public class EmptySetNode extends PlanNode {
   protected String getNodeExplainString(String prefix, String detailPrefix,
       TExplainLevel detailLevel) {
     return String.format("%s%s:%s\n", prefix, id_.toString(), displayName_);
+  }
+
+  @Override
+  protected void collectExprsWithSlotRefsForSubclass(List<Expr> exprs) {
+    // No exprs or children.
+  }
+
+  @Override
+  protected void substituteExprsForSubclass(
+      ExprSubstitutionMap smap, Analyzer analyzer) {
+    // No exprs.
   }
 
   @Override

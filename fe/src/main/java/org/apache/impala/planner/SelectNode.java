@@ -19,15 +19,15 @@ package org.apache.impala.planner;
 
 import java.util.List;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import org.apache.impala.analysis.Analyzer;
 import org.apache.impala.analysis.Expr;
+import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.thrift.TExplainLevel;
 import org.apache.impala.thrift.TPlanNode;
 import org.apache.impala.thrift.TPlanNodeType;
 import org.apache.impala.thrift.TQueryOptions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Preconditions;
 
@@ -105,5 +105,15 @@ public class SelectNode extends PlanNode {
       }
     }
     return output.toString();
+  }
+
+  @Override
+  protected void collectExprsWithSlotRefsForSubclass(List<Expr> exprs) {
+    // No exprs aside from conjuncts in this node.
+  }
+
+  @Override
+  protected void substituteExprsForSubclass(ExprSubstitutionMap smap, Analyzer analyzer) {
+    // No exprs aside from conjuncts in this node.
   }
 }

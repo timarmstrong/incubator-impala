@@ -17,7 +17,11 @@
 
 package org.apache.impala.planner;
 
+import java.util.List;
+
 import org.apache.impala.analysis.Analyzer;
+import org.apache.impala.analysis.Expr;
+import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.common.ImpalaException;
 import org.apache.impala.thrift.TCardinalityCheckNode;
 import org.apache.impala.thrift.TExplainLevel;
@@ -87,5 +91,16 @@ public class CardinalityCheckNode extends PlanNode {
   protected String getNodeExplainString(String prefix, String detailPrefix,
       TExplainLevel detailLevel) {
     return String.format("%s%s:%s\n", prefix, id_.toString(), displayName_);
+  }
+
+  @Override
+  protected void collectExprsWithSlotRefsForSubclass(List<Expr> exprs) {
+    // No exprs in this node.
+  }
+
+  @Override
+  protected void substituteExprsForSubclass(
+      ExprSubstitutionMap smap, Analyzer analyzer) {
+    // No exprs in this node.
   }
 }

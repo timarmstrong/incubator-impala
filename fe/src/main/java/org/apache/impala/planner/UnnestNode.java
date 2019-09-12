@@ -17,9 +17,12 @@
 
 package org.apache.impala.planner;
 
+import java.util.List;
+
 import org.apache.impala.analysis.Analyzer;
 import org.apache.impala.analysis.CollectionTableRef;
 import org.apache.impala.analysis.Expr;
+import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.common.ImpalaException;
 import org.apache.impala.thrift.TExplainLevel;
 import org.apache.impala.thrift.TPlanNode;
@@ -37,7 +40,7 @@ import com.google.common.base.Preconditions;
 public class UnnestNode extends PlanNode {
   private final SubplanNode containingSubplanNode_;
   private final CollectionTableRef tblRef_;
-  private final Expr collectionExpr_;
+  private Expr collectionExpr_;
 
   public UnnestNode(PlanNodeId id, SubplanNode containingSubplanNode,
       CollectionTableRef tblRef) {
@@ -104,6 +107,15 @@ public class UnnestNode extends PlanNode {
     strBuilder.append(Joiner.on(".").join(tblRef_.getPath()));
     if (tblRef_.hasExplicitAlias()) strBuilder.append(" " + tblRef_.getExplicitAlias());
     return strBuilder.toString();
+  }
+
+  @Override
+  protected void collectExprsWithSlotRefsForSubclass(List<Expr> exprs) {
+    exprs.add(collectionExpr_);
+  }
+  @Override
+  protected void substituteExprsForSubclass(ExprSubstitutionMap smap, Analyzer analyzer) {
+    collectionExpr_ = collectionExpr_.substitute(smap, analyzer, true);
   }
 
   @Override

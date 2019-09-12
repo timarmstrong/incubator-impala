@@ -21,6 +21,7 @@ import static org.apache.impala.analysis.ToSqlOptions.DEFAULT;
 
 import java.util.ArrayList;
 import java.util.BitSet;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -1245,6 +1246,15 @@ abstract public class Expr extends TreeNode<Expr> implements ParseNode, Cloneabl
     for (Expr child: children_) {
       if (!child.isBoundByTupleIds(tids)) return false;
     }
+    return true;
+  }
+
+  /**
+   * Returns true iff all expressions in 'exprs' are fully bound by 'tids'
+   */
+  public static <T extends Expr> boolean isExprListBoundByTupleIds(
+      Collection<T> exprs, List<TupleId> tids) {
+    for (Expr e: exprs) if (!e.isBoundByTupleIds(tids)) return false;
     return true;
   }
 

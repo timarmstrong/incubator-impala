@@ -17,8 +17,11 @@
 
 package org.apache.impala.planner;
 
+import java.util.List;
+
 import org.apache.impala.analysis.Analyzer;
 import org.apache.impala.analysis.Expr;
+import org.apache.impala.analysis.ExprSubstitutionMap;
 import org.apache.impala.analysis.SortInfo;
 import org.apache.impala.analysis.TupleId;
 import org.apache.impala.common.ImpalaException;
@@ -56,7 +59,7 @@ public class ExchangeNode extends PlanNode {
 
   // The parameters based on which sorted input streams are merged by this
   // exchange node. Null if this exchange does not merge sorted streams
-  private SortInfo mergeInfo_;
+  public SortInfo mergeInfo_;
 
   // Offset after which the exchange begins returning rows. Currently valid
   // only if mergeInfo_ is non-null, i.e. this is a merging exchange node.
@@ -102,37 +105,11 @@ public class ExchangeNode extends PlanNode {
 
   @Override
   public void computeStats(Analyzer analyzer) {
-    Preconditions.checkState(!children_.isEmpty(),
-        "ExchangeNode must have at least one child");
-    cardinality_ = 0;
-    for (PlanNode child: children_) {
-      if (child.getCardinality() == -1) {
-        cardinality_ = -1;
-        break;
-      }
-      cardinality_ = checkedAdd(cardinality_, child.getCardinality());
-    }
-
-    if (hasLimit()) {
-      if (cardinality_ == -1) {
-        cardinality_ = limit_;
-      } else {
-        cardinality_ = Math.min(limit_, cardinality_);
-      }
-    }
-
+    super.computeStats(analyzer);
+    Preconditions.checkState(children_.size() == 1);
+    cardinality_ = capCardinalityAtLimit(children_.get(0).getCardinality());
     // Apply the offset correction if there's a valid cardinality
-    if (cardinality_ > -1) {
-      cardinality_ = Math.max(0, cardinality_ - offset_);
-    }
-
-    // Pick the max numNodes_ and avgRowSize_ of all children.
-    numNodes_ = Integer.MIN_VALUE;
-    avgRowSize_ = Integer.MIN_VALUE;
-    for (PlanNode child: children_) {
-      numNodes_ = Math.max(child.numNodes_, numNodes_);
-      avgRowSize_ = Math.max(child.avgRowSize_, avgRowSize_);
-    }
+    if (cardinality_ > -1) cardinality_ = Math.max(0, cardinality_ - offset_);
   }
 
   /**
@@ -294,6 +271,35 @@ public class ExchangeNode extends PlanNode {
           mergeInfo_.getNullsFirst());
       msg.exchange_node.setSort_info(sortInfo);
       msg.exchange_node.setOffset(offset_);
+    }
+  }
+
+  @Override
+  protected void collectExprsWithSlotRefsForSubclass(List<Expr> exprs) {
+    DataPartition partition = getChild(0).getFragment().getOutputPartition();
+    exprs.addAll(partition.getPartitionExprs());
+    if (mergeInfo_ != null) exprs.addAll(mergeInfo_.getSortExprs());
+  }
+
+  @Override
+  protected void substituteExprsForSubclass(
+      ExprSubstitutionMap smap, Analyzer analyzer) throws ImpalaException {
+    DataPartition partition = getChild(0).getFragment().getOutputPartition();
+    partition.substitute(smap, analyzer);
+    if (mergeInfo_ != null) mergeInfo_.substituteSortExprs(smap, analyzer);
+  }
+
+  @Override
+  public void validateExprs() {
+    super.validateExprs();
+    DataPartition partition = getChild(0).getFragment().getOutputPartition();
+    // TODO: remove debugString() overhead. maybe make helper
+    Preconditions.checkState(
+        Expr.isExprListBoundByTupleIds(partition.getPartitionExprs(), tupleIds_),
+        Expr.debugString(partition.getPartitionExprs()));
+    if (mergeInfo_ != null) {
+      Preconditions.checkState(
+          Expr.isExprListBoundByTupleIds(mergeInfo_.getSortExprs(), tupleIds_));
     }
   }
 }

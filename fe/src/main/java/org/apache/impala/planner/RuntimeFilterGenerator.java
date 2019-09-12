@@ -160,7 +160,7 @@ public final class RuntimeFilterGenerator {
     // Join node that builds the filter
     private final JoinNode src_;
     // Expr (rhs of join predicate) on which the filter is built
-    private final Expr srcExpr_;
+    private Expr srcExpr_;
     // Expr (lhs of join predicate) from which the targetExprs_ are generated.
     private final Expr origTargetExpr_;
     // The operator comparing 'srcExpr_' and 'origTargetExpr_'.
@@ -274,6 +274,10 @@ public final class RuntimeFilterGenerator {
 
     public void markFinalized() { finalized_ = true; }
     public boolean isFinalized() { return finalized_; }
+
+    public void substituteSrcExpr(ExprSubstitutionMap smap, Analyzer analyzer) {
+      srcExpr_ = srcExpr_.substitute(smap, analyzer, true);
+    }
 
     /**
      * Serializes a runtime filter to Thrift.

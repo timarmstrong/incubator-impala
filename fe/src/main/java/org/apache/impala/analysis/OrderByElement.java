@@ -124,7 +124,7 @@ public class OrderByElement {
       ExprSubstitutionMap smap, Analyzer analyzer) {
     List<OrderByElement> result = Lists.newArrayListWithCapacity(src.size());
     for (OrderByElement element: src) {
-      result.add(new OrderByElement(element.getExpr().substitute(smap, analyzer, false),
+      result.add(new OrderByElement(element.getExpr().substitute(smap, analyzer, true),
           element.isAsc_, element.nullsFirstParam_));
     }
     return result;

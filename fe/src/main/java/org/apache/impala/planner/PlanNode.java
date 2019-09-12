@@ -920,4 +920,46 @@ abstract public class PlanNode extends TreeNode<PlanNode> {
   public void setDisableCodegen(boolean disableCodegen) {
     disableCodegen_ = disableCodegen;
   }
+
+  /**
+   * Add all expressions that may include references to slots produced by
+   * children nodes to 'exprs'.
+   * TODO: clarify how strict we need to be.
+   * TODO: add helpers to filter exprs.
+   */
+  public final void collectExprsWithSlotRefs(List<Expr> exprs) {
+    exprs.addAll(conjuncts_);
+    collectExprsWithSlotRefsForSubclass(exprs);
+  }
+
+  /**
+   * Adds any additional expressions from the subclass of PlanNode.
+   */
+  protected abstract void collectExprsWithSlotRefsForSubclass(List<Expr> exprs);
+
+  /**
+   * Substitute all expressions in this plan node according to 'smap'.
+   */
+  public final void substituteExprs(ExprSubstitutionMap smap, Analyzer analyzer)
+      throws ImpalaException {
+    conjuncts_ = Expr.substituteList(conjuncts_, smap, analyzer, true);
+    for (RuntimeFilter rf: runtimeFilters_) rf.substituteSrcExpr(smap, analyzer);
+    substituteExprsForSubclass(smap, analyzer);
+  }
+
+  /**
+   * Substitute any additional expressions from the subclass of PlanNode.
+   * This only need to be implemented for expressions that may contain SlotRefs
+   * referring to tuples produced by children.
+   */
+  protected abstract void substituteExprsForSubclass(
+      ExprSubstitutionMap smap, Analyzer analyzer) throws ImpalaException;
+
+  /**
+   * Validates that the expressions in this node are well-formed.
+   * Subclasses can override to add additional checks.
+   */
+  public void validateExprs() {
+    Preconditions.checkState(Expr.isExprListBoundByTupleIds(conjuncts_, tupleIds_));
+  }
 }
