@@ -952,6 +952,20 @@ public class StmtRewriter {
         }
         rewriteWhereClauseSubqueries(stmt, analyzer);
       }
+
+      rewriteSelectClauseSubqueries(stmt, analyzer);
+    }
+
+    private void rewriteSelectClauseSubqueries(SelectStmt stmt, Analyzer analyzer) throws AnalysisException {
+      for (SelectListItem selectItem : stmt.getSelectList().getItems()) {
+        Expr expr = selectItem.getExpr();
+        List<Subquery> subqueries = new ArrayList<>();
+        expr.collectAll(Predicates.instanceOf(Subquery.class), subqueries);
+        for (Subquery sq : subqueries) {
+          LOG.info("SELECT SUBQUERY: " + sq.toSql());
+        }
+        if (subqueries.size() > 0) throw new AnalysisException("Subquery: " + subqueries.get(0).toSql());
+      }
     }
 
     /**
