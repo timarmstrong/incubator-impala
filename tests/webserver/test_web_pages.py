@@ -742,7 +742,7 @@ class TestWebPage(ImpalaTestSuite):
     cancel_status = "Cancelled from Impala&apos;s debug web interface by client at"
     assert cancel_status in response.text
     self.assert_impalad_log_contains("INFO", "Cancelled from Impala\'s debug web "
-      "interface by client at")
+      "interface by client at", expected_count=-1)
     # Session closing from the WebUI does not produce the cause message in the profile,
     # so we will skip checking the runtime profile.
     results = self.execute_query("select current_session()")
@@ -751,4 +751,4 @@ class TestWebPage(ImpalaTestSuite):
       ("25000"), session_id)
     requests.get(close_session_url)
     self.assert_impalad_log_contains("INFO", "Session closed from Impala\'s debug "
-      "web interface by client at")
+      "web interface by client at", expected_count=-1)

@@ -41,7 +41,6 @@ class TestLogFragments(ImpalaTestSuite):
         result.runtime_profile).groups()[0]
     self.execute_query("select 1")
     # Logging may be buffered, so sleep to wait out the buffering.
-    time.sleep(6)
     self.assert_impalad_log_contains('INFO', query_id +
       "] Analysis and authorization finished.")
     assert query_id.endswith("000")
