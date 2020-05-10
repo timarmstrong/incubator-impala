@@ -14,44 +14,48 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
+# Build a base HMS image for quickstart purposes.
+
 ARG BASE_IMAGE=ubuntu:16.04
 FROM ${BASE_IMAGE}
 
-# Install minimal dependencies required for Impala services to run.
+# Common label arguments.
+ARG MAINTAINER
+ARG URL
+ARG VCS_REF
+ARG VCS_TYPE
+ARG VCS_URL
+ARG VERSION
+
 RUN apt-get update && \
   apt-get install -y openjdk-8-jre-headless \
-  libsasl2-2 libsasl2-modules libsasl2-modules-gssapi-mit \
   sudo netcat-openbsd less curl iproute2 vim iputils-ping \
   tzdata krb5-user && \
   apt-get clean && \
   rm -rf /var/lib/apt/lists/*
 
-# Use a non-privileged impala user to run the daemons in the container.
-# That user should own everything in the /opt/impala subdirectory.
-RUN groupadd -r impala -g 1000 && useradd --no-log-init -r -u 1000 -g 1000 impala && \
-    mkdir -p /opt/impala && chown impala /opt/impala && \
+# Use a non-privileged hive user to run the daemons in the container.
+# That user should own everything in the /opt/hive and /var/lib/hive subdirectories
+RUN groupadd -r hive && useradd --no-log-init -r -g hive hive && \
+    mkdir -p /opt/hive && chown hive /opt/hive && \
+    mkdir -p /var/lib/hive && chown hive /var/lib/hive && \
     chmod ugo+w /etc/passwd
-USER impala
+USER hive
 
-# Copy build artifacts required for the daemon processes. The daemon images are
-# responsible for copying in the required jar files, as each daemon has a different
-# set of jar dependencies.
-# Need to have multiple copy commands to preserve directory structure.
-COPY --chown=impala www /opt/impala/www
-COPY --chown=impala bin /opt/impala/bin
-# Symlink here instead of in setup_build_context to avoid duplicate binaries.
-RUN cd /opt/impala/bin && ln -s impalad statestored && ln -s impalad catalogd && \
-# Create conf directory for later config injection.
-    mkdir /opt/impala/conf && \
-# Create logs directory to collect container logs.
-    mkdir /opt/impala/logs && \
-# Create ranger cache directory that is used when ranger is enabled.
-    mkdir /opt/impala/rangercache
+# Copy the Hive install.
+WORKDIR /opt/hive
+COPY --chown=hive hive /opt/hive
+COPY --chown=hive hadoop /opt/hadoop
+COPY --chown=hive hms-entrypoint.sh /hms-entrypoint.sh
 
-WORKDIR /opt/impala/
+USER hive
 
-LABEL name="Apache Impala Daemon Base Image" \
-      description="Common base image for Apache Impala daemons." \
+# Add the entrypoint.
+ENTRYPOINT ["/hms-entrypoint.sh"]
+
+LABEL name="Apache Impala HMS Quickstart" \
+      description="Basic HMS image for Impala quickstart." \
       # Common labels.
       org.label-schema.maintainer=$MAINTAINER \
       org.label-schema.url=$URL \
