@@ -221,7 +221,7 @@ public class AnalyticEvalNode extends PlanNode {
 
     // compare elements[i]
     Expr lhs = elements.get(i);
-    Preconditions.checkState(lhs.isBound(inputTid));
+    Preconditions.checkState(lhs.isBound(inputTid), lhs.debugString());
     Expr rhs = lhs.substitute(bufferedSmap, analyzer, false);
 
     Expr bothNull = new CompoundPredicate(
@@ -371,33 +371,44 @@ public class AnalyticEvalNode extends PlanNode {
    *  - If there is a predicate on the analytic function (provided through the
    *    selectNode), the predicate's eligibility is checked (see further below)
    * @param sortInfo The sort info from the outer sort node
+   * @param sortInputSmap the input smap that can be applied to the sort exprs from
+   *        sortInfo to get exprs referencing its input tuple.
    * @param selectNode The selection node with predicates on analytic function.
    *    This can be null if no such predicate is present.
    * @param limit Limit value from the outer sort node
    * @param analyticNodeSort The analytic sort associated with this analytic node
-   * @param sortExprsForPartitioning A placeholder list supplied by caller that is
-   *     populated with the sort exprs of the analytic sort that will be later used
-   *     for hash partitioning of the distributed TopN.
    * @param analyzer analyzer instance
    * @return True if limit pushdown into analytic sort is safe, False if not
    */
-  public boolean isLimitPushdownSafe(SortInfo sortInfo, SelectNode selectNode,
-    long limit, SortNode analyticNodeSort, List<Expr> sortExprsForPartitioning,
-    Analyzer analyzer) {
+  public boolean isLimitPushdownSafe(SortInfo sortInfo, ExprSubstitutionMap sortInputSmap,
+    SelectNode selectNode, long limit, SortNode analyticNodeSort, Analyzer analyzer) {
     if (analyticFnCalls_.size() != 1) return false;
     Expr expr = analyticFnCalls_.get(0);
     if (!(expr instanceof FunctionCallExpr) ||
          (!AnalyticExpr.isRankingFn(((FunctionCallExpr) expr).getFn()))) {
       return false;
     }
+    if (analyticNodeSort.isPartitionedTopN() &&
+            limit > analyticNodeSort.getPerPartitionLimit()) {
+      // Pushdown of a limit to a partitioned top-n operator is implemented by converting
+      // it to a top-n operator. This is safe if the ordering matches exactly (which
+      // we check for later) and the total limit is less than or equal to the
+      // per-partition limit. In this case after conversion the unpartitioned top-N
+      // returns only a subset of the rows that the partitioned top-N would have returned
+      // and only filters out additional rows that would have been filtered later based
+      // on 'limit'.
+      // TODO: check the sort exprs below
+      return false;
+    }
+
     List<Expr> analyticSortSortExprs = analyticNodeSort.getSortInfo().getSortExprs();
 
     // In the mapping below, we use the original sort exprs that the sortInfo was
     // created with, not the sort exprs that got mapped in SortInfo.createSortTupleInfo().
-    // This allows us to substitute it using this node's output smap.
+    // This allows us to substitute it so that it references the analytic sort tuple.
     List<Expr> origSortExprs = sortInfo != null ? sortInfo.getOrigSortExprs() :
             new ArrayList<>();
-    List<Expr> sortExprs = Expr.substituteList(origSortExprs, getOutputSmap(),
+    List<Expr> sortExprs = Expr.substituteList(origSortExprs, sortInputSmap,
             analyzer, false);
     // Also use substituted partition exprs such that they can be compared with the
     // sort exprs
@@ -413,7 +424,6 @@ public class AnalyticEvalNode extends PlanNode {
       Pair<Boolean, Double> status =
               isPredEligibleForLimitPushdown(selectNode.getConjuncts(), limit);
       if (status.first) {
-        sortExprsForPartitioning.addAll(analyticSortSortExprs);
         selectNode.setSelectivity(status.second);
         return true;
       }
@@ -424,17 +434,11 @@ public class AnalyticEvalNode extends PlanNode {
     // Check if pby exprs are a prefix of the top level sort exprs
     // TODO: also check if subsequent expressions match. Need to check ASC and NULLS FIRST
     // compatibility more explicitly in the case.
-    if (sortExprs.size() == 0) {
-      sortExprsForPartitioning.addAll(pbExprs);
-    } else {
+    if (sortExprs.size() > 0) {
       if (!analyticSortExprsArePrefix(
               sortInfo, sortExprs, analyticNodeSort.getSortInfo(), pbExprs)) {
         return false;
       }
-
-      // get the corresponding sort exprs from the analytic sort
-      // since that's what will eventually be used for hash partitioning
-      sortExprsForPartitioning.addAll(analyticSortSortExprs.subList(0, pbExprs.size()));
     }
 
     // check that the window frame is UNBOUNDED PRECEDING to CURRENT ROW

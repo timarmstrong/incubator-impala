@@ -17,6 +17,8 @@
 
 package org.apache.impala.analysis;
 
+import static org.apache.impala.analysis.ToSqlOptions.DEFAULT;
+
 import java.math.BigDecimal;
 
 import org.apache.impala.common.AnalysisException;
@@ -28,9 +30,8 @@ import org.apache.impala.thrift.TAnalyticWindowBoundaryType;
 import org.apache.impala.thrift.TAnalyticWindowType;
 import org.apache.impala.thrift.TColumnValue;
 import org.apache.impala.util.TColumnValueUtil;
-import com.google.common.base.Preconditions;
 
-import static org.apache.impala.analysis.ToSqlOptions.DEFAULT;
+import com.google.common.base.Preconditions;
 
 /**
  * Windowing clause of an analytic expr

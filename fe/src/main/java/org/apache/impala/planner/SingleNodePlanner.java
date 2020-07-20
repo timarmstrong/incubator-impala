@@ -64,8 +64,8 @@ import org.apache.impala.catalog.FeDataSourceTable;
 import org.apache.impala.catalog.FeFsPartition;
 import org.apache.impala.catalog.FeFsTable;
 import org.apache.impala.catalog.FeHBaseTable;
-import org.apache.impala.catalog.FeKuduTable;
 import org.apache.impala.catalog.FeIcebergTable;
+import org.apache.impala.catalog.FeKuduTable;
 import org.apache.impala.catalog.FeTable;
 import org.apache.impala.catalog.HdfsFileFormat;
 import org.apache.impala.catalog.ScalarType;
@@ -288,6 +288,7 @@ public class SingleNodePlanner {
         } else {
           groupingExprs = Collections.emptyList();
         }
+
         List<Expr> inputPartitionExprs = new ArrayList<>();
         root = analyticPlanner.createSingleNodePlan(
             root, groupingExprs, inputPartitionExprs);
@@ -336,35 +337,20 @@ public class SingleNodePlanner {
       long limit, long offset, boolean hasLimit, boolean disableTopN)
       throws ImpalaException {
     SortNode sortNode;
-    long topNBytesLimit = ctx_.getQueryOptions().topn_bytes_limit;
 
     if (hasLimit && offset == 0) {
       checkAndApplyLimitPushdown(root, sortInfo, limit, analyzer);
     }
 
     if (hasLimit && !disableTopN) {
-      if (topNBytesLimit <= 0) {
-        sortNode =
-            SortNode.createTopNSortNode(ctx_.getNextNodeId(), root, sortInfo, offset);
-      } else {
-        long topNCardinality = PlanNode.capCardinalityAtLimit(root.cardinality_, limit);
-        long estimatedTopNMaterializedSize =
-            sortInfo.estimateTopNMaterializedSize(topNCardinality, offset);
-
-        if (estimatedTopNMaterializedSize < topNBytesLimit) {
-          sortNode =
-              SortNode.createTopNSortNode(ctx_.getNextNodeId(), root, sortInfo, offset);
-        } else {
-          sortNode =
-              SortNode.createTotalSortNode(ctx_.getNextNodeId(), root, sortInfo, offset);
-        }
-      }
+      sortNode = SortNode.createTopNSortNode(ctx_.getQueryOptions(),
+          ctx_.getNextNodeId(), root, sortInfo, offset, limit);
     } else {
       sortNode =
           SortNode.createTotalSortNode(ctx_.getNextNodeId(), root, sortInfo, offset);
+      sortNode.setLimit(limit);
     }
     Preconditions.checkState(sortNode.hasValidStats());
-    sortNode.setLimit(limit);
     sortNode.init(analyzer);
 
     return sortNode;
@@ -379,7 +365,6 @@ public class SingleNodePlanner {
     boolean pushdownLimit = false;
     AnalyticEvalNode analyticNode = null;
     List<PlanNode> intermediateNodes = new ArrayList<>();
-    List<Expr>  partitioningExprs = new ArrayList<>();
     SortNode analyticNodeSort = null;
     PlanNode descendant = findDescendantAnalyticNode(root, intermediateNodes);
     if (descendant != null && intermediateNodes.size() <= 1) {
@@ -396,19 +381,19 @@ public class SingleNodePlanner {
               (numNodes == 1 && !(intermediateNodes.get(0) instanceof SelectNode))) {
         pushdownLimit = false;
       } else if (numNodes == 0) {
-        pushdownLimit = analyticNode.isLimitPushdownSafe(sortInfo, null,
-            limit, analyticNodeSort, partitioningExprs, ctx_.getRootAnalyzer());
+        pushdownLimit = analyticNode.isLimitPushdownSafe(sortInfo, root.getOutputSmap(),
+            null, limit, analyticNodeSort, ctx_.getRootAnalyzer());
       } else {
         SelectNode selectNode = (SelectNode) intermediateNodes.get(0);
-        pushdownLimit = analyticNode.isLimitPushdownSafe(sortInfo, selectNode,
-            limit, analyticNodeSort, partitioningExprs, ctx_.getRootAnalyzer());
+        pushdownLimit = analyticNode.isLimitPushdownSafe(sortInfo, root.getOutputSmap(),
+            selectNode, limit, analyticNodeSort, ctx_.getRootAnalyzer());
       }
     }
 
     if (pushdownLimit) {
       Preconditions.checkArgument(analyticNode != null);
       Preconditions.checkArgument(analyticNode.getChild(0) instanceof SortNode);
-      analyticNodeSort.convertToTopN(limit, partitioningExprs, analyzer);
+      analyticNodeSort.convertToTopN(limit, analyzer);
       // after the limit is pushed down, update stats for the analytic eval node
       // and intermediate nodes
       analyticNode.computeStats(analyzer);
@@ -445,10 +430,8 @@ public class SingleNodePlanner {
 
   /**
    * If there are unassigned conjuncts that are bound by tupleIds or if there are slot
-   * equivalences for tupleIds that have not yet been enforced, returns a SelectNode on
-   * top of root that evaluates those conjuncts; otherwise returns root unchanged.
-   * TODO: change this to assign the unassigned conjuncts to root itself, if that is
-   * semantically correct
+   * equivalences for tupleIds that have not yet been enforced, add them to the plan
+   * tree, returning either the original root or a new root.
    */
   private PlanNode addUnassignedConjuncts(
       Analyzer analyzer, List<TupleId> tupleIds, PlanNode root) {
@@ -458,37 +441,7 @@ public class SingleNodePlanner {
     // Gather unassigned conjuncts and generate predicates to enforce
     // slot equivalences for each tuple id.
     List<Expr> conjuncts = analyzer.getUnassignedConjuncts(root);
-    if (LOG.isTraceEnabled()) {
-      LOG.trace(String.format("unassigned conjuncts for (Node %s): %s",
-          root.getDisplayLabel(), Expr.debugString(conjuncts)));
-      LOG.trace("all conjuncts: " + analyzer.conjunctAssignmentsDebugString());
-    }
-    for (TupleId tid: tupleIds) {
-      analyzer.createEquivConjuncts(tid, conjuncts);
-    }
-    if (conjuncts.isEmpty()) return root;
-
-    List<Expr> finalConjuncts = new ArrayList<>();
-    // Check if this is an inferred identity predicate i.e for c1 = c2 both
-    // sides are pointing to the same source slot. In such cases it is wrong
-    // to add the predicate to the SELECT node because it will incorrectly
-    // eliminate rows with NULL values.
-    for (Expr e : conjuncts) {
-      if (e instanceof BinaryPredicate && ((BinaryPredicate) e).isInferred()) {
-        SlotDescriptor lhs = ((BinaryPredicate) e).getChild(0).findSrcScanSlot();
-        SlotDescriptor rhs = ((BinaryPredicate) e).getChild(1).findSrcScanSlot();
-        if (lhs != null && rhs != null && lhs.equals(rhs)) continue;
-      }
-      finalConjuncts.add(e);
-    }
-    if (finalConjuncts.isEmpty()) return root;
-
-    // evaluate conjuncts in SelectNode
-    SelectNode selectNode = new SelectNode(ctx_.getNextNodeId(), root, finalConjuncts);
-    // init() marks conjuncts as assigned
-    selectNode.init(analyzer);
-    Preconditions.checkState(selectNode.hasValidStats());
-    return selectNode;
+    return root.addConjunctsToNode(ctx_, analyzer, tupleIds, conjuncts);
   }
 
   /**
@@ -1354,7 +1307,7 @@ public class SingleNodePlanner {
    * makes the *output* of the computation visible to the enclosing scope, so that
    * filters from the enclosing scope can be safely applied (to the grouping cols, say).
    */
-  public void migrateConjunctsToInlineView(final Analyzer analyzer,
+  private void migrateConjunctsToInlineView(final Analyzer analyzer,
       final InlineViewRef inlineViewRef) throws ImpalaException {
     List<TupleId> tids = inlineViewRef.getId().asList();
     if (inlineViewRef.isTableMaskingView()
@@ -1363,9 +1316,23 @@ public class SingleNodePlanner {
     }
     List<Expr> unassignedConjuncts = analyzer.getUnassignedConjuncts(tids, true);
     if (LOG.isTraceEnabled()) {
-      LOG.trace("unassignedConjuncts: " + Expr.debugString(unassignedConjuncts));
+      LOG.trace("migrateConjunctsToInlineView() unassignedConjuncts: " +
+          Expr.debugString(unassignedConjuncts));
     }
     if (!canMigrateConjuncts(inlineViewRef)) {
+      // We may be able to migrate some specific analytic conjuncts into the view.
+      List<Expr> analyticPreds = findAnalyticConjunctsToMigrate(analyzer, inlineViewRef,
+              unassignedConjuncts);
+      if (analyticPreds.size() > 0) {
+        if (LOG.isTraceEnabled()) {
+          LOG.trace("Migrate analytic predicates into view " +
+              Expr.debugString(analyticPreds));
+        }
+        analyzer.markConjunctsAssigned(analyticPreds);
+        unassignedConjuncts.removeAll(analyticPreds);
+        addConjunctsIntoInlineView(analyzer, inlineViewRef, analyticPreds);
+      }
+
       // mark (fully resolve) slots referenced by unassigned conjuncts as
       // materialized
       List<Expr> substUnassigned = Expr.substituteList(unassignedConjuncts,
@@ -1386,6 +1353,53 @@ public class SingleNodePlanner {
     // Propagate the conjuncts evaluating the nullable side of outer-join.
     // Don't mark them as assigned so they would be assigned at the JOIN node.
     preds.addAll(evalAfterJoinPreds);
+    addConjunctsIntoInlineView(analyzer, inlineViewRef, preds);
+
+    // mark (fully resolve) slots referenced by remaining unassigned conjuncts as
+    // materialized
+    List<Expr> substUnassigned = Expr.substituteList(unassignedConjuncts,
+        inlineViewRef.getBaseTblSmap(), analyzer, false);
+    analyzer.materializeSlots(substUnassigned);
+  }
+
+  /**
+   * Return any conjuncts in 'conjuncts' that reference analytic exprs in 'inlineViewRef'
+   * and can be safely migrated into 'inlineViewRef', even if
+   * canMigrateConjuncts(inlineViewRef) is false.
+   */
+  private List<Expr> findAnalyticConjunctsToMigrate(final Analyzer analyzer,
+          final InlineViewRef inlineViewRef, List<Expr> conjuncts) {
+    // Not safe to migrate if the inline view has a limit or offset that is applied after
+    // analytic function evaluation.
+    if (inlineViewRef.getViewStmt().hasLimit() || inlineViewRef.getViewStmt().hasOffset()
+            || !(inlineViewRef.getViewStmt() instanceof SelectStmt)) {
+      return Collections.emptyList();
+    }
+    SelectStmt selectStmt = ((SelectStmt) inlineViewRef.getViewStmt());
+    if (!selectStmt.hasAnalyticInfo()) return Collections.emptyList();
+
+    // Find conjuncts that reference the (logical) analytic tuple. These conjuncts will
+    // only be evaluated after the analytic functions in the subquery so will not migrate
+    // to be evaluated earlier in the plan (which could produce incorrect results).
+    TupleDescriptor analyticTuple = selectStmt.getAnalyticInfo().getOutputTupleDesc();
+    List<Expr> analyticPreds = new ArrayList<>();
+    for (int i = 0; i < conjuncts.size(); ++i) {
+      Expr pred = conjuncts.get(i);
+      Expr viewPred = pred.substitute(inlineViewRef.getSmap(), analyzer, false);
+      if (viewPred.referencesTuple(analyticTuple.getId())) {
+        analyticPreds.add(pred);
+      }
+    }
+    return analyticPreds;
+  }
+
+  /**
+   * Add the provided conjuncts to be evaluated inside 'inlineViewRef'.
+   * Does not mark the conjuncts as assigned.
+   */
+  private void addConjunctsIntoInlineView(final Analyzer analyzer,
+          final InlineViewRef inlineViewRef, List<Expr> preds)
+                  throws AnalysisException {
     // Generate predicates to enforce equivalences among slots of the inline view
     // tuple. These predicates are also migrated into the inline view.
     analyzer.createEquivConjuncts(inlineViewRef.getId(), preds);
@@ -1437,12 +1451,6 @@ public class SingleNodePlanner {
     // apply to the post-join/agg/analytic result of the inline view.
     for (Expr e: viewPredicates) e.setIsOnClauseConjunct(false);
     inlineViewRef.getAnalyzer().registerConjuncts(viewPredicates);
-
-    // mark (fully resolve) slots referenced by remaining unassigned conjuncts as
-    // materialized
-    List<Expr> substUnassigned = Expr.substituteList(unassignedConjuncts,
-        inlineViewRef.getBaseTblSmap(), analyzer, false);
-    analyzer.materializeSlots(substUnassigned);
   }
 
   /**
@@ -1997,7 +2005,6 @@ public class SingleNodePlanner {
     Expr.getIds(allJoinConjuncts, null, allSlotIds);
     List<TupleId> joinInputTupleIds = joinInput.getTupleIds();
     List<Expr> distinctExprs = new ArrayList<>();
-    double estDistinctTupleSize = 0;
     for (SlotDescriptor slot : analyzer.getSlotDescs(allSlotIds)) {
       if (joinInputTupleIds.contains(slot.getParent().getId())) {
         distinctExprs.add(new SlotRef(slot));

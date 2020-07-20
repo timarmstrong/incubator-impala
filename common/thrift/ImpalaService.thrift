@@ -617,6 +617,12 @@ enum TImpalaQueryOptions {
   // canceled if the query is still executing after this limit is hit. A value
   // of 0 means there is no limit on the number of join rows produced.
   JOIN_ROWS_PRODUCED_LIMIT = 119
+
+  // If > 0, the rank()/row_number() pushdown into pre-analytic sorts is enabled
+  // if the limit would be less than or equal to the threshold.
+  // If 0 or -1, disables the optimization (i.e. falls back to pre-Impala-4.0
+  // behaviour).
+  ANALYTIC_RANK_PUSHDOWN_THRESHOLD = 120
 }
 
 // The summary of a DML statement.

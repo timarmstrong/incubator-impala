@@ -735,6 +735,22 @@ public class CardinalityTest extends PlannerTestBase {
   }
 
   @Test
+  public void testPartitionedTopNNode() {
+    // Create the path to the SortNode of interest in a distributed plan.
+    List<Integer> path = Arrays.asList(0, 0);
+
+    // NDV(smallint_col) = 97, NDV(bool_col) = 2
+    // 5 rows per top-N partition
+    // 97 * 2 * 5 = 970
+    verifyApproxCardinality("select * from (" +
+            "  select *, row_number() over " +
+            "  (partition by smallint_col, bool_col order by id) as rn" +
+            "  from functional.alltypesagg where id % 777 = 0 or id % 10 = 7) v" +
+            " where rn <= 5", 970, true, ImmutableSet.of(), path, SortNode.class);
+  }
+
+
+  @Test
   public void testSubPlanNode() {
     // Create the path to the SubplanNode of interest
     // in a distributed plan.

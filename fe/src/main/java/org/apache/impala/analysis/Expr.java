@@ -1417,6 +1417,19 @@ abstract public class Expr extends TreeNode<Expr> implements ParseNode, Cloneabl
   }
 
   /**
+   * Returns true if this expression tree references a slot in the tuple identified
+   * by tid.
+   */
+  public boolean referencesTuple(TupleId tid) {
+    // This is the default implementation. Expr subclasses that reference slots in
+    // tuples, i.e. SlotRef, must override this.
+    for (Expr child: children_) {
+      if (child.referencesTuple(tid)) return true;
+    }
+    return false;
+  }
+
+  /**
    * Returns true if this expression should be treated as constant. I.e. if the frontend
    * and backend should assume that two evaluations of the expression within a query will
    * return the same value. Examples of constant expressions include:
